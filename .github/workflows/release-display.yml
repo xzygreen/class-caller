@@ -1,0 +1,93 @@
+name: Build and release display.exe
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-display-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build Windows 7 x86 release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            echo "Use a version such as v1.1.0 or v1.1.0-beta.1." >&2
+            exit 1
+          fi
+
+      - name: Install x86 MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-mingw-w64-i686 binutils-mingw-w64-i686 file
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build display.exe
+        run: bash windows-display/build-mingw-x86.sh
+
+      - name: Run tests, including compiled EXE checks
+        run: npm test
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          mkdir -p dist
+          asset="ClassCallerDisplay-${RELEASE_TAG}-win7-x86.exe"
+          cp windows-display/build/display.exe "dist/$asset"
+          (
+            cd dist
+            sha256sum "$asset" > "$asset.sha256"
+          )
+          file "dist/$asset"
+          i686-w64-mingw32-objdump -f "dist/$asset" | grep -E 'file format|architecture'
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassCallerDisplay-${{ env.RELEASE_TAG }}-win7-x86
+          path: |
+            dist/*.exe
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.exe dist/*.sha256 --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/*.exe dist/*.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "Class Caller Display $RELEASE_TAG" \
+              --generate-notes
+          fi
