@@ -94,6 +94,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          release_notice=$(cat <<'EOF'
+          ## 使用前必须配置
+
+          解压 ZIP 后，请先打开 `display.ini`，填写实际部署信息：
+
+          - `server=`：真实的服务网址，例如 `https://你的域名`
+          - `class_id=`：这台大屏对应的班级 ID
+
+          公开发布包不会包含真实服务网址、班级配置、学生名单或密码。配置完成后再运行 `display.exe` 或 `start-display.cmd`。
+          EOF
+          )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip dist/*.sha256 --clobber
           else
@@ -101,5 +112,6 @@ jobs:
               dist/*.exe dist/*.zip dist/*.sha256 \
               --target "$GITHUB_SHA" \
               --title "Class Caller Display $RELEASE_TAG" \
+              --notes "$release_notice" \
               --generate-notes
           fi
