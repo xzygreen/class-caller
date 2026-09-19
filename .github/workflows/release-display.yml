@@ -41,7 +41,7 @@ jobs:
       - name: Install x86 MinGW toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --yes gcc-mingw-w64-i686 binutils-mingw-w64-i686 file
+          sudo apt-get install --yes gcc-mingw-w64-i686 binutils-mingw-w64-i686 file zip
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -59,11 +59,22 @@ jobs:
         run: |
           mkdir -p dist
           asset="ClassCallerDisplay-${RELEASE_TAG}-win7-x86.exe"
+          bundle="ClassCallerDisplay-${RELEASE_TAG}-win7-x86"
           cp windows-display/build/display.exe "dist/$asset"
+          mkdir -p "dist/$bundle"
+          cp windows-display/build/display.exe "dist/$bundle/display.exe"
+          cp windows-display/display.ini.example "dist/$bundle/display.ini"
+          cp windows-display/start-display.cmd "dist/$bundle/start-display.cmd"
+          cp windows-display/install-autostart.cmd "dist/$bundle/install-autostart.cmd"
+          cp windows-display/uninstall-autostart.cmd "dist/$bundle/uninstall-autostart.cmd"
+          cp docs/windows-display.md "dist/$bundle/README.md"
           (
             cd dist
             sha256sum "$asset" > "$asset.sha256"
+            zip -9 -r "$bundle.zip" "$bundle"
+            sha256sum "$bundle.zip" > "$bundle.zip.sha256"
           )
+          rm -rf "dist/$bundle"
           file "dist/$asset"
           i686-w64-mingw32-objdump -f "dist/$asset" | grep -E 'file format|architecture'
 
@@ -73,6 +84,7 @@ jobs:
           name: ClassCallerDisplay-${{ env.RELEASE_TAG }}-win7-x86
           path: |
             dist/*.exe
+            dist/*.zip
             dist/*.sha256
           if-no-files-found: error
           retention-days: 30
@@ -83,10 +95,10 @@ jobs:
         shell: bash
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/*.exe dist/*.sha256 --clobber
+            gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip dist/*.sha256 --clobber
           else
             gh release create "$RELEASE_TAG" \
-              dist/*.exe dist/*.sha256 \
+              dist/*.exe dist/*.zip dist/*.sha256 \
               --target "$GITHUB_SHA" \
               --title "Class Caller Display $RELEASE_TAG" \
               --generate-notes
