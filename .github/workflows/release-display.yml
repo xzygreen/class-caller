@@ -68,6 +68,7 @@ jobs:
           cp windows-display/install-autostart.cmd "dist/$bundle/install-autostart.cmd"
           cp windows-display/uninstall-autostart.cmd "dist/$bundle/uninstall-autostart.cmd"
           cp docs/windows-display.md "dist/$bundle/README.md"
+          cp LICENSE NOTICE.md PRIVACY.md "dist/$bundle/"
           (
             cd dist
             sha256sum "$asset" > "$asset.sha256"
