@@ -1,0 +1,11 @@
+[launcher]
+; 只允许这里配置的固定 EXE。网页/SSE 不能覆盖目标路径。
+target_path=D:\tools\school-win7-app\SchoolProgram.exe
+working_directory=D:\tools\school-win7-app
+
+; 去重状态必须放在持久的 D 盘。目录需事先存在。
+state_path=D:\tools\win7-launcher.state
+
+; 自定义协议直接启动时，以 payload.issuedAt 为准接受 5..300 秒内的事件。
+; 应与服务器 students.json 的 launcher.freshSeconds 保持一致。
+fresh_seconds=30

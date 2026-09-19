@@ -1,0 +1,73 @@
+{
+  "version": 2,
+  "classes": [
+    {
+      "id": "class-a",
+      "name": "示例班级1",
+      "code": "01",
+      "color": "blue",
+      "password": "change-me-01",
+      "autoClearSeconds": 30,
+      "launcher": {
+        "mode": "off",
+        "freshSeconds": 30
+      },
+      "students": [
+        "示例学生1A",
+        "示例学生1B",
+        "示例学生1C"
+      ]
+    },
+    {
+      "id": "class-b",
+      "name": "示例班级2",
+      "code": "02",
+      "color": "green",
+      "password": "change-me-02",
+      "autoClearSeconds": 30,
+      "launcher": {
+        "mode": "off",
+        "freshSeconds": 30
+      },
+      "students": [
+        "示例学生2A",
+        "示例学生2B",
+        "示例学生2C"
+      ]
+    },
+    {
+      "id": "class-c",
+      "name": "示例班级3",
+      "code": "03",
+      "color": "orange",
+      "password": "change-me-03",
+      "autoClearSeconds": 30,
+      "launcher": {
+        "mode": "off",
+        "freshSeconds": 30
+      },
+      "students": [
+        "示例学生3A",
+        "示例学生3B",
+        "示例学生3C"
+      ]
+    },
+    {
+      "id": "class-d",
+      "name": "示例班级4",
+      "code": "04",
+      "color": "purple",
+      "password": "change-me-04",
+      "autoClearSeconds": 30,
+      "launcher": {
+        "mode": "off",
+        "freshSeconds": 30
+      },
+      "students": [
+        "示例学生4A",
+        "示例学生4B",
+        "示例学生4C"
+      ]
+    }
+  ]
+}

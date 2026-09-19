@@ -1,0 +1,48 @@
+[Unit]
+Description=Teacher Student Notice Display (老师找人通知大屏)
+After=network.target
+# 60 秒内连续失败 5 次就不再重试，避免坏配置导致无限重启刷屏
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# 独立低权限账号，由 deploy.sh 自动创建
+User=classcaller
+Group=classcaller
+
+WorkingDirectory=/opt/class-caller
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# 只监听回环地址，公网一律经 Nginx 反代
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/node /opt/class-caller/server.js
+
+# 只在异常退出时重启；systemctl stop 不会被自动拉起来
+Restart=on-failure
+RestartSec=3
+
+# 结构化日志直接交给 journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=class-caller
+
+# ---------- 安全限制 ----------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# 应用不需要写任何目录；students.json 由管理员改，服务只读
+ReadOnlyPaths=/opt/class-caller
+
+[Install]
+WantedBy=multi-user.target

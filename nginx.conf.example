@@ -1,0 +1,77 @@
+# /etc/nginx/sites-available/class-caller
+#
+# 两处关键点，删掉任何一处都会出问题：
+#   1. /api/classes/<班级>/public/stream 是 SSE 长连接 —— 必须关缓冲、关 gzip、拉长超时
+#   2. Node 只监听 127.0.0.1，公网只能经由这里进来
+
+# ---------- HTTP：只做跳转 ----------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name 你的域名.com;
+
+    # 证书续期要走 HTTP，放行这一条
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+
+    location / { return 301 https://$host$request_uri; }
+}
+
+# ---------- HTTPS：正式入口 ----------
+# 说明：certbot --nginx 会自动补齐 ssl_certificate 等指令。
+# 若暂时没有域名和证书，把下面这段的 listen 443 ssl 改回 listen 80，
+# 并删掉上面那个跳转 server 块。
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name 你的域名.com;
+
+    # ssl_certificate     /etc/letsencrypt/live/你的域名.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/你的域名.com/privkey.pem;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+
+    # ---------- SSE 事件流：这段是重点 ----------
+    # 每个班一条流：/api/classes/class-a/public/stream、/api/classes/class-b/public/stream …
+    location ~ ^/api/classes/[a-z0-9-]+/public/stream$ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+        proxy_set_header Connection '';        # 保持长连接
+
+        proxy_buffering    off;                # 关缓冲，消息才能立刻推出去
+        proxy_cache        off;
+        gzip               off;                # gzip 会攒够一块才发，同样卡住
+        chunked_transfer_encoding on;
+        proxy_read_timeout 24h;                # 默认 60s 会掐掉空闲的大屏连接
+        proxy_send_timeout 24h;
+    }
+
+    # ---------- 老师端接口 ----------
+    # 登录由应用自己校验（选班 + 该班密码 → 短期令牌，X-Teacher-Token 头）。
+    # 应用按 X-Real-IP 做登录失败限速，务必保留下面的 X-Real-IP 头。
+    # 若想再加一道 Nginx 层的门，取消下面两行注释并用 htpasswd 生成口令文件。
+    location ~ ^/api/classes/[a-z0-9-]+/teacher/ {
+        # auth_basic           "Teacher Only";
+        # auth_basic_user_file /etc/nginx/.htpasswd;
+
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ---------- 页面与其余接口 ----------
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

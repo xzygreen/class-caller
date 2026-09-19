@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+students.json
+.impeccable/
+windows-display/build/
+windows-launcher/build/
+windows-launcher/*.obj
+windows-launcher/fangfa.txt
+*.log
+*.ini
+!*.ini.example

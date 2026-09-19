@@ -1,0 +1,33 @@
+; ClassCaller 大屏配置（此行故意留作第一行：即使编辑器加了 UTF-8 BOM，也不会破坏下面的 [display] 节名）
+[display]
+; 服务器地址（Nginx 反代后的 HTTPS 入口，不要带 /api/... 路径，也不要带尾部斜杠）
+; 程序会自己拼出 /api/classes/<class_id>/public/stream?role=display 等接口
+server=https://example.com
+
+; 本教室绑定的班级标识（必填）。以服务器 students.json 里各班的 id 为准：
+;   示例班级1 = class-a    示例班级2 = class-b    示例班级3 = class-c    示例班级4 = class-d
+; 没有这一项程序会拒绝启动，绝不会默认进入任何班级；填错会在大屏上显示醒目的「班级绑定错误」。
+class_id=class-a
+
+; 显示通知期间把窗口置顶（推荐 1）
+topmost_when_active=1
+
+; 任何时候都置顶：教室专用大屏机可设 1；如果大屏机平时还要上课用，保持 0，
+; 待机时它会退到普通窗口层，老师可以按 Esc 把它最小化，下一次通知会自动恢复弹出。
+always_topmost=0
+
+; 新通知时播放两声提示音（用主板/声卡 Beep，无需音频文件）
+sound=1
+
+; 开机自启时是否先最小化到任务栏（1 = 平时不挡屏幕，收到通知才弹出）
+start_minimized=0
+
+; 0 = 普通窗口（右上角有最小化/最大化/关闭三个按钮，启动即最大化；点 × 只是最小化，Ctrl+Q 才退出）
+; 1 = 无边框铺满整个屏幕。运行中按 F11 可临时切换。
+fullscreen=0
+
+; 鼠标静止约 2.6 秒后隐藏光标
+hide_cursor=1
+
+; 在 display.exe 旁写 display.log（每次启动覆盖，只记录连接状态、班级标识和事件编号，不记录附加消息）
+log=1

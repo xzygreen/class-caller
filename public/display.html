@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>老师找人通知</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    background: var(--ink-900);
+    color: var(--on-ink-strong);
+    cursor: none;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(160,185,235,.055) 1px, transparent 0),
+      linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 60%);
+    background-size: 26px 26px, 100% 100%;
+  }
+  body.show-cursor { cursor: default; }
+
+  /* ============ 顶栏 ============ */
+  .rail {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 2.2vh 3vw 1.6vh;
+    border-bottom: 1px solid var(--ink-600);
+  }
+  .rail-l { display: flex; align-items: center; gap: 1.1vw; }
+  .mark {
+    width: .5vw; min-width: 6px; height: 2.2vw; min-height: 26px;
+    background: var(--gold); border-radius: 2px;
+  }
+  #klass { font-size: 1.9vw; font-weight: 700; letter-spacing: .02em; }
+  /* 班级编号：与名称并列，颜色只是辅助 */
+  #klassCode {
+    font-size: 1.25vw; font-weight: 800; letter-spacing: .08em;
+    padding: .18em .6em; border-radius: var(--r-pill);
+    background: var(--class-tint, var(--gold)); color: var(--ink-900);
+  }
+  #klassCode:empty { display: none; }
+  html[data-class-color="blue"]   { --class-tint: #7FB0FF; }
+  html[data-class-color="green"]  { --class-tint: #6FE0A6; }
+  html[data-class-color="orange"] { --class-tint: #FFB466; }
+  html[data-class-color="purple"] { --class-tint: #C9A8FF; }
+  html[data-class-color="teal"]   { --class-tint: #6EDDDD; }
+  html[data-class-color="red"]    { --class-tint: #FF9B92; }
+  .rail-r {
+    display: flex; align-items: center; gap: 1.4vw;
+    font-size: 1.35vw; color: var(--on-ink-muted);
+  }
+  #railClock { font-weight: 600; color: var(--on-ink-body); }
+
+  .conn { display: flex; align-items: center; gap: .5vw; }
+  .conn i {
+    width: .6vw; min-width: 8px; height: .6vw; min-height: 8px;
+    border-radius: 50%; background: var(--alert);
+    transition: background var(--t-mid) var(--ease-out);
+  }
+  .conn.ok i { background: var(--live); }
+  .conn.ok em { color: var(--on-ink-muted); }
+  .conn em { font-style: normal; color: var(--alert); }
+
+  /* ============ 主舞台 ============ */
+  .stage { display: grid; place-items: center; padding: 0 4vw; min-height: 0; }
+  /* 通知态要让 #call 撑满舞台，否则 #names 拿不到可用高度，多人时会溢出底栏 */
+  body.active .stage { place-items: stretch; }
+
+  /* ---- 待机 ---- */
+  #idle { text-align: center; }
+  #clock {
+    font-size: 17vw; font-weight: 200; line-height: .92;
+    letter-spacing: -.045em;
+  }
+  #clock s { text-decoration: none; color: var(--on-ink-muted); }
+  #date {
+    margin-top: 2.4vh; font-size: 2.1vw; font-weight: 500;
+    letter-spacing: .28em; text-indent: .28em; color: var(--on-ink-muted);
+  }
+  /* 待机也显示班级，方便巡检设备是否绑对了班 */
+  #stageKlass {
+    margin-top: 3.2vh; font-size: 1.6vw; font-weight: 700;
+    letter-spacing: .32em; text-indent: .32em; color: var(--class-tint, var(--gold));
+  }
+
+  /* ---- 绑定错误：不进入任何班级 ---- */
+  #bind { display: none; text-align: center; max-width: 70vw; }
+  body.bind-error #idle, body.bind-error #call { display: none; }
+  body.bind-error #bind { display: block; }
+  #bind h1 {
+    margin: 0 0 2vh; font-size: 5vw; font-weight: 800; letter-spacing: .06em;
+    color: #FF9B92;
+  }
+  #bind p { margin: 0; font-size: 2vw; line-height: 1.6; color: var(--on-ink-body); overflow-wrap: anywhere; }
+  /* ---- 找人通知 ---- */
+  #call { display: none; width: 100%; height: 100%; }
+  body.active #idle { display: none; }
+  body.active #call { display: grid; grid-template-rows: auto 1fr auto; }
+
+  #label {
+    justify-self: center;
+    display: inline-flex; align-items: center; gap: 1.2vw;
+    font-size: 1.7vw; font-weight: 600;
+    letter-spacing: .42em; text-indent: .42em;
+    color: var(--gold); padding: 3.5vh 0 3vh;
+  }
+  #label::before, #label::after {
+    content: ""; display: block; width: 7vw; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold-dim));
+  }
+  #label::after { transform: scaleX(-1); }
+
+  /* 字号与列数由 JS 按容器像素实测决定，因此 1080p/2K/4K/超宽屏一视同仁 */
+  #names {
+    display: grid; align-content: center; justify-items: center;
+    width: 100%; height: 100%; min-height: 0;
+    /* 底部留出安全区：悬浮控件和声音提示都在这条带子里，不会压到名字 */
+    padding-bottom: 68px;
+  }
+  #names figure { margin: 0; max-width: 100%; position: relative; cursor: pointer; }
+  /* 已收到：基线变绿并在名字右上角落一枚对勾 */
+  #names figure.acked::after { background: var(--live); }
+  #names figure.acked b { color: var(--on-ink-body); }
+  #names figure.acked b::after {
+    content: "✓"; position: absolute; top: -.1em; right: -.62em;
+    font-size: .42em; font-weight: 900; color: var(--live);
+    animation: pop var(--t-mid) var(--ease-out) both;
+  }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: none; opacity: 1; } }
+  #names b {
+    display: block; font-size: 1em; font-weight: 800; line-height: 1.06;
+    letter-spacing: .03em; color: #fff; white-space: nowrap;
+    animation: reveal var(--t-slow) var(--ease-out) both;
+  }
+  /* 金色基线：把每个名字钉在版面上的结构性标尺 */
+  #names figure::after {
+    content: ""; display: block;
+    height: max(2px, .045em); margin-top: .16em;
+    background: var(--gold); transform-origin: left;
+    animation: rule var(--t-slow) var(--ease-out) both;
+    animation-delay: inherit;
+  }
+  /* 状态恢复（刷新/重连）时直接呈现，不重放入场动画 */
+  #names.restore b, #names.restore figure::after { animation: none; }
+
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(3vh); filter: blur(14px); }
+    to   { opacity: 1; transform: none; filter: blur(0); }
+  }
+  @keyframes rule { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+  /* ============ 「收到」按钮 ============ */
+  #ackRow {
+    display: flex; justify-content: center; align-items: center; gap: 1.2vw;
+    padding: 0 0 2.6vh;
+  }
+  #ack {
+    display: inline-flex; align-items: center; gap: .55em;
+    min-width: 14vw; padding: .55em 2.2em;
+    font: inherit; font-size: max(22px, 2.3vw); font-weight: 800;
+    letter-spacing: .18em; text-indent: .18em;
+    color: var(--ink-900); background: var(--gold);
+    border: 0; border-radius: var(--r-pill); cursor: pointer;
+    box-shadow: 0 0 0 0 rgba(240,180,41,.55), 0 12px 34px rgba(240,180,41,.28);
+    transition: transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out),
+      background var(--t-mid) var(--ease-out), color var(--t-mid) var(--ease-out);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  #ack:hover { transform: translateY(-2px); }
+  #ack:active { transform: translateY(1px) scale(.98); }
+  #ack svg { width: 1em; height: 1em; }
+  #ack:disabled { cursor: default; animation: none; transform: none; box-shadow: none; }
+  #ack.busy { opacity: .7; }
+  #ack.done {
+    background: rgba(47,191,113,.16); color: var(--live);
+    border: 2px solid rgba(47,191,113,.55);
+  }
+  #ackNote { font-size: max(13px, 1.1vw); color: var(--on-ink-muted); }
+  #ackNote.bad { color: #FF9B92; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(240,180,41,.55), 0 12px 34px rgba(240,180,41,.28); }
+    50% { box-shadow: 0 0 0 14px rgba(240,180,41,0), 0 12px 34px rgba(240,180,41,.28); }
+  }
+
+  /* ============ 底栏 ============ */
+  .foot {
+    border-top: 1px solid var(--ink-600); padding: 0 3vw;
+    display: grid; grid-template-rows: 0fr;
+    transition: grid-template-rows var(--t-mid) var(--ease-out);
+  }
+  body.active .foot.has-msg { grid-template-rows: 1fr; }
+  #message {
+    overflow: hidden; font-size: 2.6vw; font-weight: 700;
+    color: var(--gold); text-align: center;
+  }
+  #message span { display: block; padding: 2.6vh 0; }
+
+  #progress { height: 4px; margin: 0 -3vw; background: var(--ink-700); display: none; }
+  body.active #progress.on { display: block; }
+  #progress i {
+    display: block; height: 100%; background: var(--gold);
+    transform-origin: left; transform: scaleX(1);
+  }
+
+  /* ============ 悬浮控件（鼠标移动时才出现） ============ */
+  .tools {
+    position: fixed; right: 1.6vw; bottom: 12px; z-index: 5;
+    display: flex; gap: 10px;
+    opacity: 0; transform: translateY(6px);
+    transition: opacity var(--t-mid) var(--ease-out), transform var(--t-mid) var(--ease-out);
+    pointer-events: none;
+  }
+  .tools.show { opacity: 1; transform: none; pointer-events: auto; }
+  .tools button {
+    display: grid; place-items: center;
+    width: 46px; height: 46px; padding: 0;
+    border-radius: var(--r-sm); cursor: pointer;
+    background: rgba(20,28,48,.82); backdrop-filter: blur(8px);
+    border: 1px solid var(--ink-600); color: var(--on-ink-body);
+    transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+  }
+  .tools button:hover { background: var(--ink-600); color: #fff; }
+  .tools button[aria-pressed="false"] { color: var(--on-ink-muted); }
+
+  /* ============ 提示条 ============ */
+  .notice {
+    position: fixed; left: 50%; transform: translate(-50%, -12px);
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; border-radius: var(--r-pill);
+    font-size: max(14px, 1.05vw); font-weight: 600;
+    opacity: 0; pointer-events: none; z-index: 6;
+    transition: opacity var(--t-mid) var(--ease-out), transform var(--t-mid) var(--ease-out);
+  }
+  .notice.show { opacity: 1; transform: translate(-50%, 0); }
+
+  #reconnect {
+    top: 2.4vh; background: rgba(224,72,60,.16);
+    border: 1px solid rgba(224,72,60,.5); color: #FF9B92;
+  }
+  #reconnect::before {
+    content: ""; width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid rgba(255,155,146,.3); border-top-color: #FF9B92;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #audioTip {
+    left: 1.6vw; bottom: 14px; transform: translateY(6px);
+    padding: 7px 15px; font-size: 14px;
+    background: rgba(240,180,41,.14);
+    border: 1px solid rgba(240,180,41,.45); color: var(--gold);
+  }
+  #audioTip.show { transform: none; }
+
+  #launchWarning {
+    top: 9vh; max-width: min(680px, 88vw); border-radius: var(--r-sm);
+    background: rgba(224,72,60,.18); border: 1px solid rgba(224,72,60,.56);
+    color: #FFD0CC; text-align: center; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<header class="rail">
+  <div class="rail-l">
+    <span class="mark"></span>
+    <span id="klass">　</span>
+    <span id="klassCode"></span>
+  </div>
+  <div class="rail-r">
+    <span id="railClock" class="tnum">--:--</span>
+    <span class="conn" id="conn"><i></i><em>连接中</em></span>
+  </div>
+</header>
+
+<main class="stage">
+  <section id="idle">
+    <div id="clock" class="tnum">--<s>:</s>--</div>
+    <div id="date"></div>
+    <div id="stageKlass"></div>
+  </section>
+
+  <section id="bind" role="alert">
+    <h1 id="bindTitle">班级绑定错误</h1>
+    <p id="bindDetail"></p>
+  </section>
+
+  <section id="call">
+    <div id="label">老师正在找</div>
+    <div id="names"></div>
+    <div id="ackRow">
+      <button id="ack" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9.5 18 20 6.5"/></svg>
+        <span>收到</span>
+      </button>
+      <span id="ackNote"></span>
+    </div>
+  </section>
+</main>
+
+<footer class="foot" id="foot">
+  <div id="message"><span></span></div>
+  <div id="progress"><i></i></div>
+</footer>
+
+<div class="tools" id="tools">
+  <button id="btnSound" type="button" aria-pressed="true" title="提示音开关">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <path d="M11 5 6 9H3v6h3l5 4z"/>
+      <path class="wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>
+      <path class="mute" d="m17 9 5 6M22 9l-5 6" style="display:none"/>
+    </svg>
+  </button>
+  <button id="btnFull" type="button" title="全屏">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+    </svg>
+  </button>
+</div>
+
+<div class="notice" id="reconnect">正在重新连接…</div>
+<div class="notice" id="audioTip">点一下画面开启提示音</div>
+<div class="notice" id="launchWarning" role="alert">浏览器阻止了本地程序启动。请启用 classcaller 协议，或改用 D:\tools\win7-launcher.exe 原生监听模式后重新发送。</div>
+
+<script src="display.js"></script>
+</body>
+</html>

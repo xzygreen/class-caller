@@ -1,0 +1,114 @@
+/* ============================================================
+   老师找人通知 · 设计令牌
+   两个界面共用一套语言：教师端是操作台，大屏是通知面。
+   ============================================================ */
+
+:root {
+  /* --- 墨色阶（深色面用） --- */
+  --ink-900: #080B14;
+  --ink-800: #0B1020;
+  --ink-700: #121A2E;
+  --ink-600: #1B2540;
+  --ink-500: #2A3655;
+
+  /* --- 纸色阶（浅色面用） --- */
+  --paper-000: #FFFFFF;
+  --paper-050: #F7F8FA;
+  --paper-100: #EFF1F5;
+  --paper-200: #E2E6ED;
+  --paper-300: #CBD2DD;
+
+  /* --- 文字 --- */
+  --text-strong: #0E1420;
+  --text-body:   #3A4356;
+  --text-muted:  #5C6678;   /* 在 --paper-050/100 上均 ≥5:1 */
+  --on-ink-strong: #F2F5FB;
+  --on-ink-body:   #B4C0D6;
+  --on-ink-muted:  #7C8AA6; /* 在 --ink-900 上 5.6:1 */
+  --on-ink-faint:  #64738F; /* 仅用于非文字的分隔与描边 */
+
+  /* --- 强调色 --- */
+  --accent:        #2B5CE6;   /* 操作台主色：靛蓝 */
+  --accent-press:  #1F47BC;
+  --accent-wash:   #EAF0FE;
+  --gold:          #F0B429;   /* 展示面主色：暖金 */
+  --gold-dim:      #8A6A1F;
+  --live:          #2FBF71;   /* 在线状态 */
+  --alert:         #E0483C;
+
+  /* --- 字体 ---
+     内容 100% 是中文姓名，所以不引入任何西文字体：中文字库文件普遍 5–10MB，
+     教室内网加载会明显拖慢开机自启的大屏。直接命中各平台最端正的黑体，
+     数字与标点也交给同一套字，版面更整齐。 */
+  --font-sans:
+    "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC",
+    "Noto Sans CJK SC", "Microsoft YaHei", "Hiragino Sans GB",
+    system-ui, sans-serif;
+
+  /* --- 字号阶梯（每级 ≥1.23 倍，只有四级） --- */
+  --fs-meta: 13px;   /* 状态、计数、辅助说明 */
+  --fs-ui:   16px;   /* 输入框、按钮、标签 */
+  --fs-name: 21px;   /* 学生姓名 —— 操作台的主角 */
+  --fs-title:30px;   /* 页面标题 */
+
+  /* --- 间距节奏（4 基数，按用途取名而非取值） --- */
+  --gap-hair: 4px;
+  --gap-tight: 8px;
+  --gap-item: 12px;
+  --gap-group: 20px;
+  --gap-block: 32px;
+  --gap-section: 48px;
+
+  /* --- 圆角 --- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  /* --- 层次（带偏移与柔化，不是零偏移光晕） --- */
+  --lift-1: 0 1px 2px rgba(14, 20, 32, .06),
+            0 2px 6px rgba(14, 20, 32, .04);
+  --lift-2: 0 2px 4px rgba(14, 20, 32, .07),
+            0 8px 20px rgba(14, 20, 32, .08);
+  --lift-3: 0 4px 8px rgba(14, 20, 32, .08),
+            0 18px 44px rgba(14, 20, 32, .14);
+
+  /* --- 缓动：指数式减速，从已可见状态出发 --- */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-io:  cubic-bezier(.65, 0, .35, 1);
+  --t-fast: 140ms;
+  --t-mid:  260ms;
+  --t-slow: 520ms;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* --- 浏览器自带的那部分表面，也归设计系统管 --- */
+::selection { background: var(--accent); color: #fff; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* 数字一律等宽对齐，时钟和计数不会跳动 */
+.tnum { font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
