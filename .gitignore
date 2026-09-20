@@ -9,3 +9,5 @@ windows-launcher/fangfa.txt
 *.log
 *.ini
 !*.ini.example
+data/
+*.bak.*

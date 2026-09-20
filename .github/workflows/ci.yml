@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run tests
+        run: npm test
+
+  display:
+    name: Build display.exe (Windows 7 x86)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install x86 MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-mingw-w64-i686 binutils-mingw-w64-i686 file
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build display.exe
+        run: bash windows-display/build-mingw-x86.sh
+      - name: Build win7-launcher.exe
+        run: bash windows-launcher/build-mingw-x86.sh
+      - name: Run tests, including compiled EXE checks
+        run: npm test
+      - name: Upload display.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: display-win7-x86-${{ github.sha }}
+          path: |
+            windows-display/build/display.exe
+            windows-launcher/build/win7-launcher.exe
+          if-no-files-found: error
+          retention-days: 30

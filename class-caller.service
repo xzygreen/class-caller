@@ -16,6 +16,12 @@ Environment=NODE_ENV=production
 Environment=PORT=3000
 # 只监听回环地址，公网一律经 Nginx 反代
 Environment=HOST=127.0.0.1
+# 数据仓库（账号、班级、名单、作息、定时任务、通知记录、审计）放在可写的状态目录
+Environment=DATA_DIR=/var/lib/class-caller
+# 首个管理员：只在数据仓库里还没有管理员时读取一次。
+# 建议改用 `npm run init-admin` 交互创建，或在首次启动后删掉下面两行。
+#Environment=ADMIN_USERNAME=admin
+#Environment=ADMIN_PASSWORD=请替换为强密码
 ExecStart=/usr/bin/node /opt/class-caller/server.js
 
 # 只在异常退出时重启；systemctl stop 不会被自动拉起来
@@ -41,8 +47,10 @@ RestrictNamespaces=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=false
-# 应用不需要写任何目录；students.json 由管理员改，服务只读
+# 代码目录只读；数据目录由 systemd 创建（/var/lib/class-caller，0700，属主 classcaller）
 ReadOnlyPaths=/opt/class-caller
+StateDirectory=class-caller
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

@@ -1,10 +1,11 @@
 {
   "name": "class-caller",
-  "version": "1.0.0",
-  "description": "老师找人通知大屏（零运行时依赖）",
+  "version": "2.0.0",
+  "description": "老师找人通知大屏：个人账号、班级授权、全校作息、定时提醒与班级留言（零运行时依赖）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "init-admin": "node scripts/init-admin.js",
     "test": "node --test test/*.test.js"
   },
   "engines": {

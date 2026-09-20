@@ -55,7 +55,9 @@
 #define CC_MAX_NAMES         20
 #define CC_MAX_NAME_UNITS    20
 #define CC_MAX_MESSAGE_UNITS 60
-#define CC_CALLER_UNITS      16
+#define CC_CALLER_UNITS      40      /* 「数学老师 · 张老师」：职务 + 姓名 */
+#define CC_TITLE_UNITS       30      /* 留言标题 */
+#define CC_BODY_UNITS        300     /* 留言正文 */
 #define CC_MAX_SSE_LINE      16384
 #define CC_MAX_SSE_DATA      16384
 #define CC_MAX_URL           2048
@@ -119,7 +121,12 @@ typedef struct ClassInfo {
 } ClassInfo;
 
 typedef struct DisplayEvent {
-    int is_call;
+    int is_call;                     /* type == "call"：点人 */
+    int is_announcement;             /* type == "announcement"：班级留言（没有「收到」流程） */
+    int priority;                    /* 1 紧急 / 2 定时 / 3 手动 / 4 留言 */
+    int queued;                      /* 服务端等待显示的内容条数 */
+    WCHAR title[CC_TITLE_UNITS + 1];     /* 留言标题 */
+    WCHAR body[CC_BODY_UNITS + 1];       /* 留言正文（可含换行） */
     ULONGLONG id;
     WCHAR class_id[CC_CLASS_ID_UNITS + 1];   /* 快照里的 classId；必须与绑定一致才会显示 */
     int name_count;
@@ -533,6 +540,16 @@ static int text_has_control(const WCHAR *text)
     return 0;
 }
 
+/* 留言正文允许换行，其它控制字符仍然拒绝 */
+static int text_has_control_except_newline(const WCHAR *text)
+{
+    for (; *text != L'\0'; ++text) {
+        if (*text == L'\n' || *text == L'\r') continue;
+        if (*text < 0x20 || *text == 0x7f) return 1;
+    }
+    return 0;
+}
+
 static int parse_names(JsonParser *p, DisplayEvent *event)
 {
     SIZE_T units;
@@ -624,6 +641,24 @@ static int parse_snapshot(const char *json, SIZE_T length, DisplayEvent *event)
             /* clear 快照的 caller 是空串，不能当成畸形帧丢掉，否则老师手动清屏时 exe 不清 */
             if (!json_parse_string(&p, event->caller, CC_CALLER_UNITS + 1, NULL)) return 0;
             if (text_has_control(event->caller)) return 0;
+        } else if (wcscmp(key, L"title") == 0) {
+            if (!json_parse_string(&p, event->title, CC_TITLE_UNITS + 1, NULL)) return 0;
+            if (text_has_control(event->title)) return 0;
+        } else if (wcscmp(key, L"body") == 0) {
+            if (!json_parse_string(&p, event->body, CC_BODY_UNITS + 1, NULL)) return 0;
+            if (text_has_control_except_newline(event->body)) return 0;
+        } else if (wcscmp(key, L"author") == 0) {
+            /* 留言的发布人；点人快照没有这个字段，用 caller */
+            if (!json_parse_string(&p, event->caller, CC_CALLER_UNITS + 1, NULL)) return 0;
+            if (text_has_control(event->caller)) return 0;
+        } else if (wcscmp(key, L"priority") == 0) {
+            ULONGLONG v;
+            if (!json_parse_uint64(&p, &v)) return 0;
+            event->priority = (int)(v > 9 ? 9 : v);
+        } else if (wcscmp(key, L"queued") == 0) {
+            ULONGLONG v;
+            if (!json_parse_uint64(&p, &v)) return 0;
+            event->queued = (int)(v > 99 ? 99 : v);
         } else if (wcscmp(key, L"createdAt") == 0) {
             if (!json_parse_uint64(&p, &event->created_at)) return 0;
         } else if (wcscmp(key, L"serverTime") == 0) {
@@ -647,7 +682,9 @@ static int parse_snapshot(const char *json, SIZE_T length, DisplayEvent *event)
     json_skip_space(&p);
     if (p.pos != p.length || !seen_type || !seen_id) return 0;
     event->is_call = wcscmp(type, L"call") == 0;
+    event->is_announcement = wcscmp(type, L"announcement") == 0;
     if (event->is_call && event->name_count == 0) return 0;
+    if (event->is_announcement && event->title[0] == L'\0' && event->body[0] == L'\0') return 0;
     for (i = 0; i < acked_count; ++i) {
         for (j = 0; j < event->name_count; ++j) {
             if (wcscmp(acked_names[i], event->names[j]) == 0) event->acked[j] = 1;
@@ -712,8 +749,9 @@ static void sse_dispatch(SseParser *parser)
                     event->id, event->class_id, g_config.class_id);
                 free(event);
             } else {
-                log_line(L"frame id=%I64u type=%ls names=%d", event->id,
-                    event->is_call ? L"call" : L"clear", event->name_count);
+                log_line(L"frame id=%I64u type=%ls names=%d queued=%d", event->id,
+                    event->is_call ? L"call" : (event->is_announcement ? L"announcement" : L"clear"),
+                    event->name_count, event->queued);
                 if (!PostMessageW(g_hwnd, WM_APP_EVENT, 0, (LPARAM)event)) free(event);
             }
         }
@@ -1370,14 +1408,15 @@ static void apply_event(const DisplayEvent *event)
     is_new = event->id > g_last_id;
     if (event->id > g_last_id) g_last_id = event->id;
     /* 绑定错误期间只记 id，不显示任何通知 */
-    if (g_bind_error && event->is_call) {
-        log_line(L"suppressed call id=%I64u while class binding is invalid", event->id);
+    if (g_bind_error && (event->is_call || event->is_announcement)) {
+        log_line(L"suppressed %ls id=%I64u while class binding is invalid",
+            event->is_call ? L"call" : L"announcement", event->id);
         return;
     }
     g_current = *event;
     KillTimer(g_hwnd, TIMER_EXPIRE);
 
-    if (!event->is_call) {
+    if (!event->is_call && !event->is_announcement) {
         g_expiry_local = 0;
         g_total_ms = 0;
         KillTimer(g_hwnd, TIMER_PROGRESS);
@@ -1402,7 +1441,8 @@ static void apply_event(const DisplayEvent *event)
     }
 
     if (is_new) {
-        log_line(L"call id=%I64u names=%d", event->id, event->name_count);
+        if (event->is_call) log_line(L"call id=%I64u names=%d", event->id, event->name_count);
+        else log_line(L"announcement id=%I64u priority=%d", event->id, event->priority);
         bring_to_front();
         chime();
     } else if (g_config.topmost_when_active || g_config.always_topmost) {
@@ -1826,7 +1866,7 @@ static int paint_foot(HDC dc, int w, int h)
     int msg_px = w * 26 / 1000;
     SIZE size;
 
-    if (!g_current.is_call) return h;
+    if (!g_current.is_call && !g_current.is_announcement) return h;
     if (msg_px < 16) msg_px = 16;
 
     if (g_expiry_local != 0) {
@@ -1837,7 +1877,7 @@ static int paint_foot(HDC dc, int w, int h)
         fill_rect(dc, 0, foot_top, w, h, C_INK_700);
         fill_rect(dc, 0, foot_top, filled, h, C_GOLD);
     }
-    if (g_current.message[0] != L'\0') {
+    if (g_current.is_call && g_current.message[0] != L'\0') {
         msg_font = make_font(msg_px, FW_BOLD);
         size = measure(dc, msg_font, g_current.message);
         foot_top -= size.cy + h * 52 / 1000;
@@ -1902,6 +1942,114 @@ static void paint_bind_error(HDC dc, int w, int top, int bottom)
     DeleteObject(detail_font);
 }
 
+/* 班级留言版式：标题 + 正文 + 发布人。没有「收到」按钮，学生不需要做任何操作。 */
+static void paint_announcement(HDC dc, int w, int top, int bottom)
+{
+    HFONT kind_font, title_font, body_font, author_font;
+    const WCHAR *kind = g_current.priority == 1 ? L"紧急通知" : L"班级留言";
+    COLORREF accent = g_current.priority == 1 ? C_ALERT_TXT : C_GOLD;
+    int kind_px = w * 15 / 1000, title_px = w * 52 / 1000, body_px = w * 29 / 1000, author_px = w * 17 / 1000;
+    int pad_top = (bottom - top) * 32 / 1000, y, line_w = w * 6 / 100, x, label_w;
+    SIZE size;
+    HGDIOBJ old;
+    RECT body_rect;
+    int body_h, rule_w;
+
+    if (kind_px < 13) kind_px = 13;
+    if (title_px < 28) title_px = 28;
+    if (title_px > (bottom - top) * 9 / 100) title_px = (bottom - top) * 9 / 100;
+    if (body_px < 20) body_px = 20;
+    if (body_px > (bottom - top) * 6 / 100) body_px = (bottom - top) * 6 / 100;
+    if (author_px < 14) author_px = 14;
+
+    kind_font = make_font(kind_px, FW_SEMIBOLD);
+    title_font = make_font(title_px, FW_BOLD);
+    body_font = make_font(body_px, FW_NORMAL);
+    author_font = make_font(author_px, FW_SEMIBOLD);
+
+    /* 顶部小标签「班级留言」/「紧急通知」，两侧渐隐线 */
+    y = top + pad_top;
+    old = SelectObject(dc, kind_font);
+    SetTextCharacterExtra(dc, kind_px * 42 / 100);
+    GetTextExtentPoint32W(dc, kind, (int)wcslen(kind), &size);
+    label_w = size.cx;
+    SetTextColor(dc, accent);
+    SetTextAlign(dc, TA_CENTER | TA_TOP);
+    TextOutW(dc, w / 2 + kind_px * 21 / 100, y, kind, (int)wcslen(kind));
+    SetTextCharacterExtra(dc, 0);
+    SelectObject(dc, old);
+    x = w / 2 - label_w / 2 - w * 12 / 1000;
+    fill_rect(dc, x - line_w, y + size.cy / 2 - 1, x, y + size.cy / 2 + 1, g_current.priority == 1 ? C_ALERT : C_GOLD_DIM);
+    fill_rect(dc, w - x, y + size.cy / 2 - 1, w - x + line_w, y + size.cy / 2 + 1, g_current.priority == 1 ? C_ALERT : C_GOLD_DIM);
+    y += size.cy;
+
+    /* 正文高度先量出来，再让标题 + 正文整体垂直居中 */
+    body_rect.left = w * 9 / 100; body_rect.right = w - w * 9 / 100; body_rect.top = 0; body_rect.bottom = 0;
+    old = SelectObject(dc, body_font);
+    body_h = g_current.body[0] != L'\0'
+        ? DrawTextW(dc, g_current.body, -1, &body_rect, DT_CALCRECT | DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL)
+        : 0;
+    SelectObject(dc, old);
+    size = measure(dc, title_font, g_current.title[0] != L'\0' ? g_current.title : L" ");
+    {
+        int author_h = author_px * 2 + (bottom - top) * 3 / 100;
+        int avail_top = y + (bottom - top) * 2 / 100;
+        int avail_bottom = bottom - author_h;
+        int total = size.cy + title_px * 45 / 100 + (body_h ? body_h + body_px * 12 / 10 : 0);
+        int start = (avail_top + avail_bottom) / 2 - total / 2;
+        if (start < avail_top) start = avail_top;
+
+        if (g_current.title[0] != L'\0') {
+            draw_text_at(dc, title_font, C_WHITE, w / 2, start, g_current.title, TA_CENTER);
+        }
+        rule_w = w * 18 / 100;
+        fill_rect(dc, w / 2 - rule_w / 2, start + size.cy + title_px * 20 / 100,
+            w / 2 + rule_w / 2, start + size.cy + title_px * 20 / 100 + (title_px * 6 / 100 < 3 ? 3 : title_px * 6 / 100), accent);
+        if (body_h) {
+            body_rect.top = start + size.cy + title_px * 45 / 100 + body_px * 12 / 10;
+            body_rect.bottom = avail_bottom;
+            old = SelectObject(dc, body_font);
+            SetTextColor(dc, C_ON_STRONG);
+            DrawTextW(dc, g_current.body, -1, &body_rect, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
+            SelectObject(dc, old);
+        }
+    }
+
+    /* 发布人：右下角「—— 数学老师 · 张老师」 */
+    if (g_current.caller[0] != L'\0') {
+        WCHAR author[CC_CALLER_UNITS + 8];
+        StringCchPrintfW(author, CC_CALLER_UNITS + 8, L"—— %ls", g_current.caller);
+        draw_text_at(dc, author_font, C_ON_MUTED, w - w * 5 / 100, bottom - author_px * 2 - (bottom - top) * 2 / 100, author, TA_RIGHT);
+    }
+
+    DeleteObject(kind_font);
+    DeleteObject(title_font);
+    DeleteObject(body_font);
+    DeleteObject(author_font);
+}
+
+/* 底部小提示：还有几条内容在服务端排队等待显示 */
+static void paint_queue_hint(HDC dc, int w, int h)
+{
+    WCHAR text[48];
+    HFONT font;
+    int px = w * 11 / 1000;
+    SIZE size;
+    int pad, x, y;
+
+    if (g_current.queued <= 0 || (!g_current.is_call && !g_current.is_announcement)) return;
+    if (px < 12) px = 12;
+    StringCchPrintfW(text, 48, L"还有 %d 条内容等待显示", g_current.queued);
+    font = make_font(px, FW_SEMIBOLD);
+    size = measure(dc, font, text);
+    pad = px * 8 / 10;
+    x = w / 2 - size.cx / 2 - pad;
+    y = h - size.cy - pad * 2 - 14;
+    fill_rect(dc, x, y, x + size.cx + pad * 2, y + size.cy + pad * 2, C_INK_700);
+    draw_text_at(dc, font, C_ON_MUTED, w / 2, y + pad, text, TA_CENTER);
+    DeleteObject(font);
+}
+
 static void paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
@@ -1930,11 +2078,16 @@ static void paint(HWND hwnd)
         paint_bind_error(dc, w, rail_bottom, foot_top);
     } else if (g_current.is_call) {
         paint_call(dc, w, rail_bottom, foot_top);
+    } else if (g_current.is_announcement) {
+        memset(&g_ack_rect, 0, sizeof(g_ack_rect));
+        g_name_rect_count = 0;
+        paint_announcement(dc, w, rail_bottom, foot_top);
     } else {
         memset(&g_ack_rect, 0, sizeof(g_ack_rect));
         g_name_rect_count = 0;
         paint_idle(dc, w, rail_bottom, foot_top);
     }
+    paint_queue_hint(dc, w, h);
     paint_reconnect_notice(dc, w, h);
 
     BitBlt(window_dc, 0, 0, w, h, dc, 0, 0, SRCCOPY);
@@ -1970,7 +2123,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             SetCursor(NULL);
         } else if (wparam == TIMER_EXPIRE) {
             KillTimer(hwnd, TIMER_EXPIRE);
-            if (g_current.is_call && g_expiry_local != 0 && unix_ms_now() >= g_expiry_local) {
+            if ((g_current.is_call || g_current.is_announcement) && g_expiry_local != 0 && unix_ms_now() >= g_expiry_local) {
                 DisplayEvent clear;
                 memset(&clear, 0, sizeof(clear));
                 clear.id = g_last_id;
@@ -2099,13 +2252,13 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             fit_to_monitor();
         } else if (wparam == 'T') {
             g_config.always_topmost = !g_config.always_topmost;
-            set_topmost(g_config.always_topmost || (g_current.is_call && g_config.topmost_when_active));
+            set_topmost(g_config.always_topmost || ((g_current.is_call || g_current.is_announcement) && g_config.topmost_when_active));
         }
         return 0;
 
     case WM_SYSCOMMAND:
         if ((wparam & 0xFFF0) == SC_SCREENSAVE || (wparam & 0xFFF0) == SC_MONITORPOWER) {
-            if (g_current.is_call) return 0;     /* 显示通知时阻止屏保/关屏 */
+            if (g_current.is_call || g_current.is_announcement) return 0;     /* 显示通知时阻止屏保/关屏 */
         }
         break;
 
@@ -2189,6 +2342,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     int argc = 0, i;
     WCHAR **argv;
     const WCHAR *ini_arg = NULL, *server_arg = NULL, *class_arg = NULL, *preview_arg = NULL, *msg_arg = NULL;
+    const WCHAR *notice_arg = NULL;
     int minimized_arg = 0;
     HANDLE mutex;
     WNDCLASSEXW wc;
@@ -2204,6 +2358,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         else if (wcscmp(argv[i], L"--server") == 0 && i + 1 < argc) server_arg = argv[++i];
         else if (wcscmp(argv[i], L"--class") == 0 && i + 1 < argc) class_arg = argv[++i];
         else if (wcscmp(argv[i], L"--preview") == 0 && i + 1 < argc) preview_arg = argv[++i];
+        else if (wcscmp(argv[i], L"--preview-notice") == 0 && i + 1 < argc) notice_arg = argv[++i];
         else if (wcscmp(argv[i], L"--msg") == 0 && i + 1 < argc) msg_arg = argv[++i];
         else if (wcscmp(argv[i], L"--minimized") == 0) minimized_arg = 1;
         else if (wcscmp(argv[i], L"--install-autostart") == 0 || wcscmp(argv[i], L"--uninstall-autostart") == 0) {
@@ -2219,6 +2374,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
                 L"用法：\n"
                 L"  display.exe [--config D:\\class-caller\\display.ini] [--server https://域名] [--class class-a]\n"
                 L"  display.exe --preview 张三,李四 [--msg 请到办公室]\n"
+                L"  display.exe --preview-notice 标题|正文    （离线预览班级留言版式）\n"
                 L"  display.exe --minimized\n"
                 L"  display.exe --install-autostart | --uninstall-autostart\n\n"
                 L"再次运行 display.exe 会把已经在运行的大屏窗口拉到最前。",
@@ -2245,6 +2401,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     log_line(L"display starting; server=%ls class_id=%ls ini=%ls", g_config.server, g_config.class_id, g_config.ini_path);
 
+    if (notice_arg != NULL) {
+        g_preview = 1;
+        if (preview_arg == NULL) preview_arg = L"";
+    }
     if (preview_arg != NULL) {
         g_preview = 1;
         StringCchCopyW(g_conn_text, 64, L"预览模式");
@@ -2302,7 +2462,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     UpdateWindow(g_hwnd);
 
-    if (g_preview) {
+    if (g_preview && notice_arg != NULL) {
+        /* --preview-notice "标题|正文"：离线预览留言版式 */
+        const WCHAR *bar = wcschr(notice_arg, L'|');
+        memset(&preview_event, 0, sizeof(preview_event));
+        preview_event.is_announcement = 1;
+        preview_event.priority = 4;
+        preview_event.id = 1;
+        if (bar != NULL) {
+            size_t n = (size_t)(bar - notice_arg);
+            if (n > CC_TITLE_UNITS) n = CC_TITLE_UNITS;
+            wcsncpy(preview_event.title, notice_arg, n);
+            preview_event.title[n] = L'\0';
+            StringCchCopyW(preview_event.body, CC_BODY_UNITS + 1, bar + 1);
+        } else {
+            StringCchCopyW(preview_event.title, CC_TITLE_UNITS + 1, notice_arg);
+        }
+        StringCchCopyW(preview_event.caller, CC_CALLER_UNITS + 1, L"数学老师 · 张老师");
+        preview_event.created_at = unix_ms_now();
+        preview_event.server_time = preview_event.created_at;
+        preview_event.expires_at = preview_event.created_at + 60000ULL;
+        apply_event(&preview_event);
+    } else if (g_preview) {
         split_preview_names(preview_arg, &preview_event);
         StringCchCopyW(preview_event.caller, CC_CALLER_UNITS + 1, CC_DEFAULT_CALLER);
         if (msg_arg != NULL) StringCchCopyW(preview_event.message, CC_MAX_MESSAGE_UNITS + 1, msg_arg);

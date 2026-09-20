@@ -65,7 +65,7 @@
   /* ============ 主舞台 ============ */
   .stage { display: grid; place-items: center; padding: 0 4vw; min-height: 0; }
   /* 通知态要让 #call 撑满舞台，否则 #names 拿不到可用高度，多人时会溢出底栏 */
-  body.active .stage { place-items: stretch; }
+  body.active .stage, body.notice .stage { place-items: stretch; }
 
   /* ---- 待机 ---- */
   #idle { text-align: center; }
@@ -150,6 +150,42 @@
   }
   @keyframes rule { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
+  /* ---- 班级留言：突出标题和正文，没有「收到」按钮 ---- */
+  #notice { display: none; width: 100%; height: 100%; }
+  body.notice #idle, body.notice #call { display: none; }
+  body.notice #notice { display: grid; grid-template-rows: auto 1fr auto; padding: 0 4vw; }
+  #noticeKind {
+    justify-self: center; display: inline-flex; align-items: center; gap: 1.2vw;
+    font-size: 1.5vw; font-weight: 600; letter-spacing: .42em; text-indent: .42em;
+    color: var(--gold); padding: 3.2vh 0 2vh;
+  }
+  #noticeKind::before, #noticeKind::after { content: ""; display: block; width: 6vw; height: 2px; background: linear-gradient(90deg, transparent, var(--gold-dim)); }
+  #noticeKind::after { transform: scaleX(-1); }
+  body.urgent #noticeKind { color: #FF9B92; }
+  body.urgent #noticeKind::before, body.urgent #noticeKind::after { background: linear-gradient(90deg, transparent, #A3352C); }
+  #noticeMain { display: grid; align-content: center; justify-items: center; min-height: 0; text-align: center; }
+  #noticeTitle {
+    font-size: clamp(32px, 5.2vw, 9vh); font-weight: 800; letter-spacing: .04em; line-height: 1.2; color: #fff;
+    animation: reveal var(--t-slow) var(--ease-out) both;
+  }
+  #noticeTitle::after { content: ""; display: block; width: 18%; height: max(3px, .06em); margin: .35em auto 0; background: var(--gold); animation: rule var(--t-slow) var(--ease-out) both; }
+  body.urgent #noticeTitle::after { background: #FF9B92; }
+  #noticeBody {
+    margin-top: 4vh; max-width: 82vw; font-size: clamp(22px, 2.9vw, 6vh); line-height: 1.6; color: var(--on-ink-strong);
+    white-space: pre-wrap; overflow-wrap: anywhere; animation: reveal var(--t-slow) var(--ease-out) both; animation-delay: .1s;
+  }
+  #noticeAuthor { justify-self: end; padding: 0 2vw 3vh; font-size: 1.7vw; color: var(--on-ink-muted); font-weight: 600; }
+  #noticeAuthor::before { content: "—— "; }
+  #notice.restore #noticeTitle, #notice.restore #noticeBody, #notice.restore #noticeTitle::after { animation: none; }
+
+  /* ---- 等待队列提示 ---- */
+  #queueHint {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 4;
+    padding: 5px 14px; border-radius: var(--r-pill); font-size: max(12px, 1vw);
+    background: rgba(20,28,48,.82); border: 1px solid var(--ink-600); color: var(--on-ink-muted);
+  }
+  #queueHint:empty { display: none; }
+
   /* ============ 「收到」按钮 ============ */
   #ackRow {
     display: flex; justify-content: center; align-items: center; gap: 1.2vw;
@@ -190,6 +226,7 @@
     transition: grid-template-rows var(--t-mid) var(--ease-out);
   }
   body.active .foot.has-msg { grid-template-rows: 1fr; }
+  body.notice #progress.on { display: block; }
   #message {
     overflow: hidden; font-size: 2.6vw; font-weight: 700;
     color: var(--gold); text-align: center;
@@ -286,6 +323,15 @@
     <p id="bindDetail"></p>
   </section>
 
+  <section id="notice" aria-live="polite">
+    <div id="noticeKind">班级留言</div>
+    <div id="noticeMain">
+      <div id="noticeTitle"></div>
+      <div id="noticeBody"></div>
+    </div>
+    <div id="noticeAuthor"></div>
+  </section>
+
   <section id="call">
     <div id="label">老师正在找</div>
     <div id="names"></div>
@@ -322,6 +368,7 @@
   </button>
 </div>
 
+<div id="queueHint"></div>
 <div class="notice" id="reconnect">正在重新连接…</div>
 <div class="notice" id="audioTip">点一下画面开启提示音</div>
 <div class="notice" id="launchWarning" role="alert">浏览器阻止了本地程序启动。请启用 classcaller 协议，或改用 D:\tools\win7-launcher.exe 原生监听模式后重新发送。</div>

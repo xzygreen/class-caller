@@ -1,8 +1,8 @@
 # Windows 7/10 大屏程序 display.exe 部署
 
-> 更新说明：服务端启用“找人身份”后，需要重新编译并替换 `display.exe`，大屏才会显示“语文老师正在找”“数学老师正在找”等身份。`win7-launcher.exe` 不受此次字段变更影响。
+> 更新说明（账号版）：服务端新增了**班级留言**（`type: "announcement"`，含 `title`、`body`、`author`、`priority`、`queued`）。新版 `display.exe` 会以独立版式显示留言（标题 + 正文 + 发布人，没有「收到」按钮），并在底部提示等待显示的条数。旧版 exe 收到留言快照会当作清屏处理，不会显示错误内容，但要显示留言必须替换为新版。`display.ini` 不需要改。
 >
-> 用 9 月 16 日版本源码编译的 exe 有一个缺陷：`clear` 快照的 `caller` 是空串，会被它当成畸形帧丢掉（`display.log` 里出现 `ignored malformed SSE frame`），教师端手动“清空大屏”对它不生效，只能等本地倒计时到期。请用当前源码重新编译并替换。
+> 编译产物由 GitHub Actions 自动生成：推送到 `main` 会在 CI 的 Artifacts 里得到 `display.exe`；打 `v*` 标签会发布带 ZIP 和校验文件的 Release。
 
 大屏端不再依赖浏览器，而是一个**完整的 32 位原生 Windows 程序** `display.exe`：单文件、静态链接、零运行时依赖（不需要 .NET、VC 运行库、Electron 或浏览器），在 32 位和 64 位的 Windows 7 SP1 / Windows 10 上都能直接运行。
 
@@ -15,6 +15,8 @@
 | 启动 | 读取旁边的 `display.ini`，以**最大化的普通窗口**打开（右上角有标准的最小化/最大化/关闭三个按钮），顶栏显示班级名与**班级编号**、时钟和连接状态，中央是大时钟、日期和班级名（方便巡检设备绑定是否正确，没有“等待点名”之类的文字）。`fullscreen=1` 或按 `F11` 可切换为无边框铺满屏幕。 |
 | 连接 | 后台线程用 WinHTTP（强制 TLS 1.2，自动沿用当前用户的 IE/系统代理设置）长连 `https://域名/api/classes/<class_id>/public/stream?role=display`，断线后按服务端 `retry` 值（2 秒）自动重连；新连接会立即收到当前状态。每一帧快照都带 `classId`，与本机 `class_id` 不一致的帧一律丢弃并写日志，服务端异常也不会串班显示。 |
 | 收到新通知 | 自动恢复（若被最小化）、置顶、抢前台，全屏显示姓名（自动选列数与字号，最多 20 人）和金色附加消息，播放两声提示音。 |
+| 收到班级留言 | 同样前置并响铃，但改用留言版式：顶部「班级留言」（紧急广播为红色「紧急通知」）、居中大字标题、自动换行的正文、右下角发布人（如「数学老师 · 张老师」）。没有「收到」按钮，点击画面不会发出任何请求。 |
+| 多条内容排队 | 服务端按优先级（紧急 → 定时提醒 → 手动点人 → 留言）逐条显示；快照里的 `queued` 大于 0 时底部提示「还有 N 条内容等待显示」。 |
 | 「收到」按钮 | 姓名下方有一枚金色的「收到」按钮（鼠标悬停变手形，`Enter`/空格也可触发）。点击后后台线程 `POST /api/classes/<class_id>/public/ack`，成功后按钮变成绿色描边的「已收到」并禁用；直接点某个名字只确认这一个人，已确认的名字变灰、基线变绿并带对勾。确认状态由服务端通过 SSE 广播，所有大屏和教师端同步。 |
 | 倒计时 | 按服务端下发的 `expiresAt` 在底部画金色进度条；到期服务端会推 `clear`，程序本地再兜底 1.5 秒，网络抖动也不会挂着旧名字。 |
 | 班级绑定错误 | 服务器上没有 `class_id` 对应的班级（HTTP 404 `CLASS_NOT_FOUND`），或返回的 `classId` 与本机不符：顶栏和中央显示醒目的红色「班级绑定错误」，窗口标题变为“班级绑定错误 · 老师找人通知大屏”，**不显示任何通知**，直到改正 `display.ini` 并重启程序。 |
@@ -110,7 +112,7 @@ log=1
 ```
 
 - `server` 只写域名入口，不带 `/api/...`，程序自己拼 `/api/classes/<class_id>/public/stream?role=display` 与 `/api/classes/<class_id>/public/config`。
-- `class_id` 填本教室的班级标识，以服务器 `students.json` 里各班的 `id` 为准：示例班级1 `class-a`、示例班级2 `class-b`、示例班级3 `class-c`、示例班级4 `class-d`。四台大屏机各填各的，**不要复制同一份 ini 到四个教室后忘记改这一行**。
+- `class_id` 填本教室的班级标识，以管理端「班级与学生」里各班的标识为准（例如 `class-a`）。每台大屏机各填各的，**不要复制同一份 ini 到多个教室后忘记改这一行**。
 - `always_topmost=1` 适合**专用**大屏机（永远盖在最上面）。大屏机平时还要上课用的话保持 `0`。
 - `start_minimized=1` 让开机后先缩在任务栏，收到通知才弹出。
 - `fullscreen=0`（默认）是带标题栏的最大化窗口；`1` 是无边框铺满。
@@ -119,7 +121,8 @@ log=1
 
 ```bat
 D:\class-caller\display.exe --server https://example.com --class class-a
-D:\class-caller\display.exe --preview 学生130,学生131 --msg 请到办公室   rem 离线预览排版（含「收到」按钮），不联网
+D:\class-caller\display.exe --preview 学生130,学生131 --msg 请到办公室   rem 离线预览点人排版（含「收到」按钮），不联网
+D:\class-caller\display.exe --preview-notice "班级通知|明天统一穿校服，请带好实验报告。"   rem 离线预览留言版式
 D:\class-caller\display.exe --minimized
 D:\class-caller\display.exe --install-autostart                     rem 写入当前用户的开机自启（见第 4 节）
 D:\class-caller\display.exe --uninstall-autostart
@@ -155,8 +158,8 @@ D:\class-caller\install-autostart.cmd
 
 整条链路只依赖已有的 SSE，服务端不需要新增“唤醒接口”：
 
-1. 老师在 `teacher.html` 选班登录后点“通知 N 人到示例班级1大屏”，`POST /api/classes/class-a/teacher/call`（`X-Teacher-Token` 鉴权，令牌与班级绑定）。
-2. 服务端把新的快照 `{type:"call", classId, id, names, message, createdAt, expiresAt, serverTime, ...}` 广播给**该班**的所有 SSE 连接（Nginx 对各班 stream 路径关闭了缓冲和 gzip，所以是即时推送）；其他班的连接收不到。
+1. 老师用个人账号登录 `teacher.html`，进入已获授权的班级后点“通知 N 人到示例班级1大屏”，`POST /api/classes/class-a/calls`（登录 Cookie 鉴权，服务端再核对该老师对这个班的权限、当前是否允许点人、学生是否在册）。
+2. 服务端把新的快照 `{type:"call", classId, id, names, message, caller, createdAt, expiresAt, serverTime, queued, ...}` 广播给**该班**的所有 SSE 连接（Nginx 对各班 stream 路径关闭了缓冲和 gzip，所以是即时推送）；其他班的连接收不到。留言的快照是 `{type:"announcement", title, body, author, priority, ...}`。
 3. `display.exe` 的网络线程读到这一帧，核对 `classId` 与本机 `class_id` 一致后 `PostMessage` 给 UI 线程（不一致直接丢弃）。
 4. UI 线程比较 `id` 与上次记录的 `id`：更大才算**新**事件（重连时收到的同一快照只重绘，不重复弹出和响铃）。
 5. 新事件触发 `bring_to_front()`：
@@ -168,7 +171,7 @@ D:\class-caller\install-autostart.cmd
 7. 同学点「收到」：exe 在工作线程 `POST /api/classes/<class_id>/public/ack`，请求体 `{"eventId":<id>}`（点单个名字则带 `"names":["张三"]`）。服务端记录 `acks` 并广播新快照（id 不变，所以不会再次弹出/响铃）；exe 收到后把已确认的名字标灰打勾，全部确认后按钮变「已收到」并禁用。教师端「大屏正在通知」同步显示每个人 已收到/未收到。
 8. `autoClearSeconds` 到期后服务端推 `clear`，大屏回到时钟。
 
-浏览器方案之所以“无法自动弹出”，是因为网页没有权限操作其他窗口；而 exe 自己就是窗口的拥有者，所以不存在这个限制。撤销（`/api/classes/<class_id>/teacher/history/undo`）如果撤的正是当前显示的记录，服务端同样会推 `clear`；“再次发送”会产生新的 `id`，大屏会再次弹出并响铃。
+浏览器方案之所以“无法自动弹出”，是因为网页没有权限操作其他窗口；而 exe 自己就是窗口的拥有者，所以不存在这个限制。教师端「撤回」（`/api/classes/<class_id>/notices/<id>/withdraw`）如果撤的正是当前显示的内容，服务端会推下一条排队内容或 `clear`；“再次发送”会产生新的 `id`，大屏会再次弹出并响铃。
 
 同一台机器上想从脚本“强制唤醒”：再执行一次 `D:\class-caller\display.exe` 即可（单实例，只会把已有窗口拉前）。
 
@@ -180,11 +183,7 @@ exe 只使用公开接口，不需要密码：
 - `GET /api/classes/<class_id>/public/stream?role=display` —— 与浏览器大屏完全相同的本班 SSE（快照中含 `classId` 与 `acks`）；
 - `POST /api/classes/<class_id>/public/ack` —— 「收到」确认，只对本班当前通知中的姓名有效。
 
-`students.json` 建议把旧的启动器模式关掉，避免 `display.html` 再去尝试 `classcaller://` 协议：
-
-```json
-"launcher": { "mode": "off", "freshSeconds": 30 }
-```
+建议在管理端「班级与学生 → 编辑」里把旧的启动器模式设为 `off`，避免 `display.html` 再去尝试 `classcaller://` 协议。
 
 `nginx.conf.example` 已经满足要求（`~ ^/api/classes/[a-z0-9-]+/public/stream$` 正则匹配、`proxy_buffering off`、`gzip off`、24 小时超时）。唯一要注意的是 **Windows 7 的 TLS**：
 
@@ -237,4 +236,4 @@ exe 只使用公开接口，不需要密码：
 
 ## 9. 与旧的 win7-launcher 的关系
 
-`windows-launcher/win7-launcher.exe` 是“收到事件就启动另一个 exe”的启动器，适用于学校已有自己的大屏程序。现在 `display.exe` 本身就是完整大屏，两者**不要同时运行**；不需要旧启动器的话把 `students.json` 的 `launcher.mode` 设为 `off` 即可。
+`windows-launcher/win7-launcher.exe` 是“收到事件就启动另一个 exe”的启动器，适用于学校已有自己的大屏程序。现在 `display.exe` 本身就是完整大屏，两者**不要同时运行**；不需要旧启动器的话在管理端把该班的启动器模式设为 `off` 即可。

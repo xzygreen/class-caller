@@ -1,27 +1,35 @@
 # Class Caller｜老师找人通知大屏
 
-一个面向学校场景的多班级实时通知系统。老师在手机或电脑上选择学生并发送通知，指定班级的大屏会立即显示找人老师、学生姓名和附加说明；学生可在大屏上确认「收到」，教师端会同步更新确认状态。
+一个面向学校场景的多班级实时通知系统。教师用**个人账号**登录，在获授权的班级里点人、发布班级留言、创建每日定时提醒；教室大屏实时显示找人老师、学生姓名和说明，学生可在大屏上确认「收到」。管理员统一维护班级、名单、全校作息，审批教师的班级管理申请，并可查看全部操作审计。
 
-项目采用原生 Node.js 与浏览器 API 实现，服务端零第三方运行时依赖，同时提供兼容 Windows 7/10 的原生大屏程序。
+服务端零第三方运行时依赖（原生 Node.js），另有兼容 Windows 7/10 的 32 位原生大屏程序 `display.exe`。
 
 > [!IMPORTANT]
-> 公开仓库不包含真实学生名单、教师密码或部署地址。首次运行时请从 `students.example.json` 创建本地配置；`students.json` 已被 Git 忽略，请勿将真实配置、日志或访问令牌提交到公开仓库。
+> 公开仓库不包含真实学生名单、账号或部署地址。账号、名单、作息、记录都保存在服务器的数据目录（默认 `data/`，生产为 `/var/lib/class-caller`），已被 Git 忽略。请勿把数据文件、日志或凭据提交到公开仓库。
+
+## 核心原则
+
+- **登录身份属于个人**：教师自主注册，密码以 `scrypt` 加盐摘要保存；会话是 `HttpOnly` + `SameSite=Strict` 的 Cookie，浏览器脚本拿不到令牌。
+- **班级权限由管理员授权**：教师提交申请，管理员批准后才能操作该班；撤销立即生效，不等会话过期。
+- **共享班级密码已彻底移除**：旧的 `teacher/login` 接口返回 410，任何班级密码都不再是凭据。
+- **点人必须在允许时段**：全校作息按 `Asia/Shanghai` 由服务端判断，绕过网页直接调接口也会得到 `CALL_WINDOW_CLOSED`。
+- **每个请求都重新校验**：会话有效 → 账号启用 → 角色 → 班级权限 → 作息 → 学生在册。
 
 ## 功能概览
 
-- **多班级隔离：**名单、密码、通知、历史、登录会话、大屏连接和自动清屏计时均按班级隔离。
-- **实时同步：**基于 Server-Sent Events（SSE）推送通知、清屏、在线状态和确认结果，断线后自动重连。
-- **教师端操作：**支持学生搜索与多选、教师身份、附加说明、历史记录、撤销、重发和手动清屏。
-- **大屏确认：**可确认全部学生，也可逐个点击姓名确认；结果实时回传教师端。
-- **安全边界：**教师接口需要班级密码换取的短期令牌，公开接口不返回完整学生名单。
-- **多种大屏：**支持浏览器大屏，以及兼容 Windows 7/10 的 32 位原生 `display.exe`。
-- **易于部署：**自带 systemd、Nginx 示例和 Ubuntu/Debian 一键部署脚本。
+| 角色 | 能做什么 |
+| --- | --- |
+| 管理员 | 班级新增/修改/归档、名单维护、全校作息、教师账号启停与密码重置、审批/授权/撤销班级权限、管理全部定时任务与留言、清理任意大屏、紧急广播、查看在线设备与操作审计、创建其他管理员 |
+| 教师 | 注册、登录、申请管理班级；获批后点人、发布班级留言、创建每日定时提醒、查看本班统一记录 |
+| 大屏 | 点人版式（姓名、老师、说明、收到确认）与留言版式（标题、正文、发布人）；多条内容按优先级排队，教师端能看到「正在显示」与「等待显示」 |
+
+内容优先级：管理员紧急通知 → 已到点的定时提醒 → 手动点人 → 普通班级留言。持续显示的留言作为底色，任何点人都能盖过它，点完后自动回来。
 
 ## 快速开始
 
 ### 环境要求
 
-- Node.js 18 或更高版本（生产环境推荐 Node.js 22）
+- Node.js 18 或更高（生产推荐 22）
 - 无需安装 npm 依赖
 
 ### 本地运行
@@ -29,167 +37,137 @@
 ```bash
 git clone https://github.com/xzygreen/class-caller.git
 cd class-caller
-cp students.example.json students.json
-# 编辑 students.json，替换示例班级、密码和名单
 npm test
+# 创建首个管理员（交互式，密码不会被记录）
+npm run init-admin
 npm start
 ```
 
-服务默认只监听 `127.0.0.1:3000`。启动后打开：
+服务默认只监听 `127.0.0.1:3000`：
 
 - 教师端：<http://127.0.0.1:3000/teacher.html>
+- 管理端：<http://127.0.0.1:3000/admin.html>
 - 浏览器大屏：<http://127.0.0.1:3000/display.html?class=class-a>
-- 健康检查：<http://127.0.0.1:3000/api/public/classes>
+- 健康检查：<http://127.0.0.1:3000/api/public/status>
 
-如需在局域网内直接测试，可显式修改监听地址：
+也可以用环境变量创建首个管理员（只在数据仓库里还没有管理员时读取一次）：
 
 ```bash
-HOST=0.0.0.0 PORT=3000 npm start
+ADMIN_USERNAME=admin ADMIN_PASSWORD='强密码' npm start
 ```
 
-生产环境不建议直接暴露 Node.js 端口，请使用 HTTPS 反向代理。
+之后新的管理员只能由现有管理员在管理端创建。
 
-## 配置班级
+### 从旧版 students.json 导入班级
 
-`students.json` 使用 version 2 多班级格式。最小示例如下：
-
-```json
-{
-  "version": 2,
-  "classes": [
-    {
-      "id": "class-a",
-      "name": "示例班级1",
-      "code": "01",
-      "color": "blue",
-      "password": "请替换为独立强密码",
-      "autoClearSeconds": 30,
-      "launcher": {
-        "mode": "off",
-        "freshSeconds": 30
-      },
-      "students": ["示例学生1A", "示例学生1B"]
-    }
-  ]
-}
-```
-
-| 字段 | 说明 |
-| --- | --- |
-| `id` | 班级固定标识，支持小写字母、数字和连字符，长度 1–32；配置大屏后不要随意修改。 |
-| `name` | 班级显示名称，最长 32 个字符。 |
-| `code` | 界面使用的班级短编号，最长 4 个字符。 |
-| `color` | 辅助色：`blue`、`green`、`orange`、`purple`、`teal` 或 `red`。 |
-| `password` | 该班教师共享密码；每个班必须使用不同密码。 |
-| `autoClearSeconds` | 通知自动清屏时间，单位为秒，最大 3600。 |
-| `launcher.mode` | `off`、`protocol` 或 `native`；使用 `display.exe` 时保持 `off`。 |
-| `launcher.freshSeconds` | 旧启动器接受通知的有效窗口，范围 5–300 秒。 |
-| `students` | 本班学生姓名数组；同一班内不得重名。 |
-
-完整的四班示例见 [`students.example.json`](students.example.json)。配置重载采用整份校验：任何班级存在错误时都会拒绝更新，并继续使用上一份有效配置。
+数据仓库里还没有班级、且项目根目录存在旧版 `students.json`（`version: 2`）时，首次启动会自动导入班级与名单，其中的 `password` 字段被丢弃。之后班级和名单在管理端维护，不再读取该文件。参见 [`students.example.json`](students.example.json) 与[账号版升级指南](docs/upgrade-accounts.md)。
 
 ## 使用流程
 
-### 教师端
+### 教师
 
-1. 选择班级，输入该班密码登录。
-2. 确认页面顶部显示「本班大屏在线」。
-3. 搜索并选择学生；单次最多选择 20 人。
-4. 选择找人身份，按需填写不超过 60 个字符的附加说明。
-5. 点击「通知到大屏」，或使用 `Ctrl + Enter`（macOS 为 `Command + Enter`）。
-6. 在当前通知区域查看每位学生的「已收到 / 未收到」状态。
+1. 在教师端注册（登录名、姓名、密码、可选职务），登录后进入**个人工作台**。
+2. 提交「申请管理班级」，等待管理员批准；被拒绝会看到理由。
+3. 进入班级后有四个标签：
+   - **点人**：显示当前是否处于课间与下一可用时间；搜索选人（最多 20 人）、附加说明、发送；右侧是大屏当前内容、每人的收到状态和等待队列。
+   - **班级留言**：标题、正文、立即或定时显示、自动下屏时间，带大屏预览。留言不选学生，也没有「收到」流程。
+   - **定时提醒**：每周一至周五某时刻自动点人（时间必须在允许时段内），可启用/暂停/改时间/删除，能看到最近执行结果和自动暂停原因。
+   - **记录**：点人、留言、定时执行的统一时间线，按类型、教师、日期筛选。
+4. 发起人署名来自登录账号（如「数学老师 · 张老师」），不能自选身份。
 
-教师端还可清空当前大屏、重发上一条或指定历史通知、撤销最后一条记录，以及清空本班历史。切换班级时必须退出并重新登录，未发送的选择和说明会被清空。
+### 管理员
+
+`/admin.html` 首页优先展示待处理事项：待审批申请、被暂停的定时任务、离线的大屏、当前是否允许点人以及下一次窗口。其余页面：申请审批、班级与学生、教师与权限、全校作息、定时任务、大屏与设备（含紧急广播）、操作记录、系统设置。
+
+管理员发起密码重置时只会得到一次性临时密码，看不到教师原密码；教师用临时密码登录后必须先改密码。
+
+### 全校作息
+
+默认允许点人时段（周一至周五，开始包含、结束不包含）：
+
+| 时段 | 说明 |
+| --- | --- |
+| 08:45–09:00 | 课间 |
+| 09:45–10:15 | 课间 |
+| 11:00–11:15 | 课间 |
+| 11:35–12:30 | 午餐、过渡时间、午自习 |
+| 13:00–13:10 | 午休结束后的课间 |
+| 13:55–14:15 | 课间 |
+| 15:00–15:15 | 课间 |
+| 16:00–16:15 | 课间 |
+
+管理员可在网页编辑；修改后不再符合作息的定时任务自动暂停，教师端显示原因，操作写入审计。
+
+### 定时提醒的可靠性
+
+- 以「任务 ID + 日期」为唯一执行标识，服务重启或重复扫描不会一天发两次；
+- 重启后两分钟内可补发，超过则记「已错过」，不在上课途中补发；
+- 执行前重新校验作息、班级、创建教师的权限和学生是否在册；
+- 教师失去班级权限、学生被移出名单、班级归档时任务自动暂停。
 
 ### 教室大屏
 
-浏览器大屏必须通过 `class` 查询参数绑定班级：
+浏览器大屏必须通过 `class` 参数绑定班级：`https://你的域名/display.html?class=class-a`。没有参数、班级不存在或服务端返回的班级不匹配时不显示任何内容。
 
-```text
-https://你的域名/display.html?class=class-a
-```
-
-没有 `class`、班级不存在或服务端返回的班级不匹配时，大屏会拒绝展示通知。收到通知后：
-
-- 点击底部「收到」可确认全部学生；
-- 点击某个学生姓名可只确认该学生；
-- 确认结果会同步到本班所有大屏和教师端；
-- 断线重连后会恢复当前仍在展示的通知；
-- 到达 `autoClearSeconds` 后自动回到待机界面。
+- 点人：点「收到」确认全部，点姓名只确认该学生；
+- 留言：只有标题、正文和发布人，没有确认按钮；
+- 有多条内容时底部提示「还有 N 条内容等待显示」；
+- 断线重连后恢复当前内容；到期自动回到待机。
 
 ## 生产部署
 
-生产部署面向 Ubuntu/Debian，并需要 root 权限。准备好本机 `students.json` 后运行：
+面向 Ubuntu/Debian，需要 root：
 
 ```bash
 sudo bash ./deploy.sh
 ```
 
-部署脚本会：
+脚本会检查 Node.js、运行全部测试、校验线上数据仓库能否被新版本载入、创建低权限 `classcaller` 用户、安装到 `/opt/class-caller`（只读）、把数据目录设为 `/var/lib/class-caller`（0700）、注册并重启 systemd 服务，最后做健康检查。若还没有管理员，脚本会提示创建命令。
 
-1. 检查 Node.js 版本，必要时安装 Node.js 22；
-2. 运行完整测试并校验多班级配置；
-3. 创建低权限的 `classcaller` 系统用户；
-4. 安装应用到 `/opt/class-caller`；
-5. 备份服务器已有的 `students.json`；
-6. 安装、启用并重启 systemd 服务；
-7. 检查本机健康接口。
+请参考 [`nginx.conf.example`](nginx.conf.example) 配置 HTTPS 反向代理：SSE 路径关闭缓冲和 gzip；务必透传 `X-Real-IP`（登录限速）与 `X-Forwarded-Proto`（Cookie 加 `Secure`）。
 
-服务只监听 `127.0.0.1:3000`。请参考 [`nginx.conf.example`](nginx.conf.example) 配置 HTTPS 反向代理；示例已针对 SSE 关闭缓冲、缓存和 gzip，并设置长连接超时。
-
-常用维护命令：
+常用命令：
 
 ```bash
 sudo systemctl status class-caller
-sudo systemctl restart class-caller
 sudo journalctl -u class-caller -f
+cd /opt/class-caller && sudo -u classcaller DATA_DIR=/var/lib/class-caller node scripts/init-admin.js
 ```
-
-从旧的单班版本升级前，请先阅读[多班级升级指南](docs/upgrade-multiclass.md)。
 
 ## Windows 大屏方案
 
 | 方案 | 适用场景 | 配置方式 | 文档 |
 | --- | --- | --- | --- |
-| 浏览器大屏 | 现代浏览器、无需安装 | URL 中设置 `?class=<班级 ID>` | 本文「教室大屏」章节 |
+| 浏览器大屏 | 现代浏览器、无需安装 | URL 中设置 `?class=<班级 ID>` | 本文「教室大屏」 |
 | 原生 `display.exe` | Windows 7/10，需要自动前置、全屏和提示音 | `display.ini` 中设置 `server` 与 `class_id` | [原生大屏部署](docs/windows-display.md) |
 | 旧版启动器 | 需要拉起既有 Windows 程序 | 自定义协议或原生 SSE watcher | [启动器部署](docs/windows-launcher.md) |
 
-推荐使用原生 `display.exe`。它是 32 位 Win32 程序，可在 Windows 7 SP1 x86 和 Windows 10 x64 上运行；程序、配置与日志可放在不会被系统还原的 D 盘。可从 [GitHub Releases](https://github.com/xzygreen/class-caller/releases/latest) 下载带校验文件的 ZIP，也可按文档自行构建并完成实机验证。
+`display.exe` 由 GitHub Actions 自动构建：每次推送到 `main` 都会在 CI 里用 Debian 的 `gcc-mingw-w64-i686` 编译并上传产物（Actions → CI → Artifacts）；打 `v*` 标签则生成带 ZIP 与校验文件的 [Release](https://github.com/xzygreen/class-caller/releases/latest)。产物是 PE32 i386、只依赖 `msvcrt.dll`，`npm test` 会对编译产物做头部检查。新版 exe 支持留言版式；旧版 exe 收到留言快照会当作清屏处理，不会显示错误内容。
 
 ## API 概览
 
-以下示例使用 `class-a`。教师接口除登录外均需携带 `X-Teacher-Token` 请求头。
+所有修改类请求需要登录 Cookie，并校验 `Origin`。
 
-| 方法 | 路径 | 用途 | 鉴权 |
-| --- | --- | --- | --- |
-| `GET` | `/api/public/classes` | 获取可选班级的公开信息 | 否 |
-| `GET` | `/api/classes/class-a/public/config` | 获取大屏所需公开配置 | 否 |
-| `GET` | `/api/classes/class-a/public/stream?role=display` | 订阅本班 SSE 事件流 | 否 |
-| `POST` | `/api/classes/class-a/public/ack` | 确认当前通知 | 否 |
-| `POST` | `/api/classes/class-a/teacher/login` | 用班级密码换取临时令牌 | 班级密码 |
-| `GET` | `/api/classes/class-a/teacher/students` | 获取本班名单 | 令牌 |
-| `GET` | `/api/classes/class-a/teacher/status` | 获取当前大屏状态 | 令牌 |
-| `GET` | `/api/classes/class-a/teacher/history` | 获取本班历史记录 | 令牌 |
-| `POST` | `/api/classes/class-a/teacher/call` | 发送通知 | 令牌 |
-| `POST` | `/api/classes/class-a/teacher/clear` | 清空当前大屏 | 令牌 |
-| `POST` | `/api/classes/class-a/teacher/history/{undo,clear,resend}` | 管理本班历史 | 令牌 |
-| `POST` | `/api/classes/class-a/teacher/reload` | 校验并重载全部班级配置 | 令牌 |
-| `POST` | `/api/classes/class-a/teacher/logout` | 注销当前令牌 | 令牌 |
+| 组 | 路径 |
+| --- | --- |
+| 公开 | `GET /api/public/classes`、`GET /api/public/status` |
+| 大屏 | `GET /api/classes/:id/public/config`、`GET /api/classes/:id/public/stream?role=display`、`POST /api/classes/:id/public/ack` |
+| 账号 | `POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/me`、`POST /api/me/password`、`GET /api/me/classes`、`POST /api/me/class-requests`、`DELETE /api/me/class-requests/:id` |
+| 教师班级 | `GET /api/classes/:id/workspace`、`GET /api/classes/:id/stream`、`GET /api/classes/:id/status`、`POST /api/classes/:id/calls`、`POST /api/classes/:id/announcements`、`GET /api/classes/:id/notices`、`POST /api/classes/:id/notices/:nid/{resend,withdraw}`、`GET/POST /api/classes/:id/schedules`、`PATCH/DELETE /api/classes/:id/schedules/:sid`、`GET /api/classes/:id/activity`、`POST /api/classes/:id/display/clear` |
+| 管理员 | `GET /api/admin/overview`、`GET /api/admin/requests`、`POST /api/admin/requests/:id/{approve,reject}`、`GET/POST /api/admin/users`、`PATCH /api/admin/users/:id`、`POST /api/admin/memberships`、`POST /api/admin/memberships/revoke`、`GET/POST /api/admin/classes`、`PATCH /api/admin/classes/:id`、`PUT /api/admin/classes/:id/students`、`GET/PUT /api/admin/call-windows`、`GET /api/admin/schedules`、`PATCH/DELETE /api/admin/schedules/:id`、`POST /api/admin/classes/:id/display/clear`、`GET /api/admin/audit`、`GET/PATCH /api/admin/settings`、`POST /api/admin/sessions/revoke-all` |
 
-接口路径和登录会话共同决定班级，请求体中的 `classId` 不作为权限依据。旧的无班级接口 `/api/public/*` 和 `/api/teacher/*` 会返回 `410 LEGACY_ENDPOINT`。
+旧接口 `/api/classes/:id/teacher/*` 与 `/api/teacher/*` 返回 `410`。
 
 ## 数据、安全与隐私
 
-- `students.json` 由部署者维护，应用只读；生产部署将其权限设为 `0640`。
-- 教师令牌在内存中保存，最长有效 12 小时，注销或服务重启后失效。
-- 同一来源对同一班级连续输错 5 次密码，会被锁定 60 秒。
-- 班级公开接口不会返回完整学生名单，但大屏事件流会包含当前通知所需的姓名和说明。
-- 当前通知、确认状态和历史记录只保存在服务器内存中；每班最多 500 条历史，服务重启后清空。
-- 默认日志不记录原始密码、登录令牌、完整名单或附加消息正文。
-- 生产环境必须使用 HTTPS，并限制配置文件、服务器日志和大屏设备的访问权限。
+- 数据仓库是带版本号的 JSON 文件：串行写入、临时文件写完后原子替换、每日自动备份（保留 14 份）、写入失败保留上一份有效数据、文件权限 0600。业务层只通过存储接口读写，未来可切换 SQLite。
+- 密码只保存 scrypt 加盐摘要；日志不记录密码、令牌、完整名单或留言正文。
+- 登录按 IP + 用户名限速（5 次后锁 60 秒）；注册按 IP 限速。
+- 密码修改、账号停用、权限撤销、密码重置后相关会话立即失效；管理员可强制全员重新登录。
+- 教师实时流需要登录与班级权限；公开流只服务大屏，不返回完整名单。
+- 所有管理员修改都带操作者、时间、来源 IP 写入审计。
 
-部署者是其运行实例的数据管理者。涉及未成年人信息时，请在上线前阅读[隐私政策](PRIVACY.md)，并根据实际使用地区、学校制度和授权关系履行相应义务。
+涉及未成年人信息时，请在上线前阅读[隐私政策](PRIVACY.md)。
 
 ## 测试
 
@@ -197,50 +175,31 @@ sudo journalctl -u class-caller -f
 npm test
 ```
 
-测试覆盖配置校验、班级隔离、鉴权、SSE、通知确认、历史操作、自动清屏、浏览器端行为，以及 Windows 程序构建产物的基本兼容性检查。部署脚本会在修改线上目录前自动运行测试。
+覆盖：账号与会话、申请审批与权限隔离、作息规则（08:45 可点人、09:00 不能、周末与 16:15–17:00 禁止）、定时任务的去重/补偿/自动暂停、点人与留言、显示队列、数据仓库、前端页面约束、Windows 程序源码与编译产物检查。
 
 ## 项目结构
 
 ```text
 class-caller/
 ├── server.js                 # 服务入口
-├── lib/                      # 配置、鉴权、路由、状态与 SSE
-├── public/                   # 教师端与浏览器大屏
+├── scripts/init-admin.js     # 创建首个管理员
+├── lib/                      # 存储、账号、权限、作息、调度、通知队列、路由
+├── public/                   # 教师端、管理端、浏览器大屏
 ├── test/                     # Node.js 测试套件
-├── docs/                     # 升级和 Windows 部署文档
+├── docs/                     # 升级与 Windows 部署文档
 ├── windows-display/          # 原生大屏源码与构建脚本
 ├── windows-launcher/         # 旧版启动器源码与构建脚本
-├── students.example.json     # 脱敏配置示例
+├── .github/workflows/        # CI 与 display.exe 发布
+├── students.example.json     # 旧版名单示例（仅用于首次导入）
 ├── nginx.conf.example        # Nginx 反向代理示例
 ├── class-caller.service      # systemd 服务定义
 └── deploy.sh                 # Ubuntu/Debian 部署脚本
 ```
 
-## 常见问题
-
-### 教师端看不到班级列表
-
-先访问 `/api/public/classes`。若接口不可用，请检查 `class-caller` 服务状态和 Nginx 反向代理配置。
-
-### 密码正确但提示错误次数过多
-
-同一来源连续输错 5 次会锁定 60 秒。等待一分钟后，重新确认所选班级和对应密码。
-
-### 教师端显示“大屏未连接”
-
-确认大屏页面或 `display.exe` 已启动，并核对 URL 的 `class` 或 `display.ini` 的 `class_id`。原生程序的连接错误码和 TLS 排查方法见[原生大屏部署文档](docs/windows-display.md)。
-
-### 修改名单后没有生效
-
-开发环境修改项目根目录的 `students.json`；生产环境修改 `/opt/class-caller/students.json`，然后重启服务。也可通过受保护的 `teacher/reload` 接口热重载整份配置。
-
-### 服务重启后记录和登录消失
-
-这是预期行为。登录会话、当前通知、确认状态和历史记录均为内存数据，不会写入数据库。
-
 ## 文档与许可
 
-- [多班级升级指南](docs/upgrade-multiclass.md)
+- [账号版升级指南](docs/upgrade-accounts.md)
+- [多班级升级指南（历史）](docs/upgrade-multiclass.md)
 - [Windows 原生大屏部署](docs/windows-display.md)
 - [Windows 启动器部署](docs/windows-launcher.md)
 - [隐私政策](PRIVACY.md)

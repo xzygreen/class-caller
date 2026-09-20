@@ -86,7 +86,7 @@ fresh_seconds=30
 - `target_path` 必须是管理员预先配置的绝对 `.exe` 路径；网页和 SSE 无法更改它。
 - `working_directory` 是目标程序的工作目录，不是浏览器目录，也不依赖当前命令提示符目录。
 - `state_path` 必须在 D 盘。启动器会先原子写入已处理的 `deliveryId`，再启动目标，防止刷新、SSE 重连或 C 盘还原后重复弹出旧事件。
-- `fresh_seconds` 允许 5–300 秒，并应与服务器 `students.json` 中的 `launcher.freshSeconds` 一致。
+- `fresh_seconds` 允许 5–300 秒，并应与管理端里该班启动器设置的 `freshSeconds` 一致。
 
 ## 3. 目标程序收到的参数
 
@@ -148,16 +148,7 @@ reg query HKCU\Software\Classes\classcaller\shell\open\command /ve
 classcaller://v1/call?payload=<base64url>
 ```
 
-服务器 `/opt/class-caller/students.json` 配置：
-
-```json
-"launcher": {
-  "mode": "protocol",
-  "freshSeconds": 30
-}
-```
-
-修改后重启服务，或由已登录的任一班老师调用 `/api/classes/<班级id>/teacher/reload`（重载全部班级的名单）。在大屏浏览器中允许校园通知站点弹窗，并在外部协议提示中选择始终允许（若浏览器和学校策略提供该选项）。
+服务器侧由管理员在管理端「班级与学生 → 编辑」把该班的启动器模式设为 `protocol`（有效期 `freshSeconds` 默认 30 秒），保存后立即生效，不需要重启。在大屏浏览器中允许校园通知站点弹窗，并在外部协议提示中选择始终允许（若浏览器和学校策略提供该选项）。
 
 浏览器从 SSE 回调发起 `window.open` 时没有用户手势，不同浏览器/策略可能阻止它；网页也无法可靠判断外部协议是否真的启动成功。页面能明确检测到弹窗被拦截时会显示红色安装提示，但不能绕过浏览器沙箱直接运行 `D:\tools\win7-launcher.exe`。
 
@@ -178,15 +169,15 @@ classcaller://v1/call?payload=<base64url>
 
 ```bat
 cd /d D:\tools
-start-native-watcher.cmd "https://校园域名.example/api/classes/class-a/public/stream?role=launcher"
+start-native-watcher.cmd "https://校园域名.example/api/classes/class-23/public/stream?role=launcher"
 
-多班级模式下每台机器只监听**本教室班级**的事件流：把 `class-a` 换成该教室的班级 id（`class-b`、`class-c`、`class-d`）。旧的 `/api/public/stream` 地址已停用（HTTP 410），watcher 会报 `expected HTTP 200 text/event-stream (got 410)`。
+多班级模式下每台机器只监听**本教室班级**的事件流：把 `class-23` 换成该教室的班级 id（`class-17`、`class-18`、`class-20`）。旧的 `/api/public/stream` 地址已停用（HTTP 410），watcher 会报 `expected HTTP 200 text/event-stream (got 410)`。
 ```
 
 等价的明确命令为：
 
 ```bat
-D:\tools\win7-launcher.exe --config "D:\tools\win7-launcher.ini" --watch "https://校园域名.example/api/classes/class-a/public/stream?role=launcher"
+D:\tools\win7-launcher.exe --config "D:\tools\win7-launcher.ini" --watch "https://校园域名.example/api/classes/class-23/public/stream?role=launcher"
 ```
 
 启动器通过 WinHTTP 连接公开 SSE，只读取当前被推送的姓名/消息，不获取完整名单；收到心跳时保持连接，断线后按 SSE `retry` 值重连。新连接会立即同步当前状态，但只有未处理且尚未过期的 `deliveryId` 才会启动目标程序。
@@ -213,11 +204,11 @@ D:\tools\*.cmd
 
 因此每次登录必须采用一种恢复方式：
 
-1. **学校 GPO/登录脚本（推荐）：**协议模式运行 `D:\tools\register-protocol.cmd`；原生模式启动 `D:\tools\start-native-watcher.cmd "https://.../api/classes/class-a/public/stream?role=launcher"`。
+1. **学校 GPO/登录脚本（推荐）：**协议模式运行 `D:\tools\register-protocol.cmd`；原生模式启动 `D:\tools\start-native-watcher.cmd "https://.../api/classes/class-23/public/stream?role=launcher"`。
 2. 把协议键、浏览器策略或启动项预置进每次恢复的 C 盘母盘。
 3. 无集中管理时，老师开机后手动运行 D 盘对应脚本。
 
-不要同时运行协议模式和原生监听模式。`students.json` 的 `launcher.mode` 是唯一的部署模式开关。
+不要同时运行协议模式和原生监听模式。管理端里该班的启动器模式是唯一的部署模式开关。
 
 ## 7. 浏览器与安装检查
 

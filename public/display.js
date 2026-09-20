@@ -264,6 +264,7 @@ $('names').onclick = (event) => {
 
 /* ================= 渲染 ================= */
 let currentEvent = null;
+let shownEventId = 0;          // 正在显示的事件（点人或留言）的 id，本地到期定时器据此判断是否还是同一条
 const LAST_EVENT_KEY = 'cc.display.lastEventId.' + classId;
 let lastEventId = Number(sessionStorage.getItem(LAST_EVENT_KEY)) || 0;
 let expiryLocal = null;
@@ -286,7 +287,7 @@ function scheduleLocalExpiry(ev) {
   const eventId = ev.id;
   expiryTimer = setTimeout(() => {
     expiryTimer = null;
-    if (!currentEvent || currentEvent.id !== eventId) return;
+    if (shownEventId !== eventId) return;
     render({ type: 'clear' }, false);
   }, Math.max(0, expiryLocal - Date.now()));
 }
@@ -305,16 +306,57 @@ function paintProgress() {
   bar.style.transform = 'scaleX(0)';
 }
 
+function renderQueueHint(ev) {
+  const n = ev && Number.isFinite(ev.queued) ? ev.queued : 0;
+  $('queueHint').textContent = n > 0 ? '还有 ' + n + ' 条内容等待显示' : '';
+}
+
+function setExpiry(ev) {
+  if (ev.expiresAt) {
+    const skew = Date.now() - ev.serverTime;
+    expiryLocal = ev.expiresAt + skew;
+    totalMs = ev.expiresAt - ev.createdAt;
+  } else {
+    expiryLocal = null;
+  }
+}
+
+/** 班级留言版式：标题 + 正文 + 发布人，没有「收到」按钮 */
+function renderAnnouncement(ev, isNew) {
+  currentNames = [];
+  document.body.classList.remove('active');
+  document.body.classList.add('notice');
+  document.body.classList.toggle('urgent', ev.priority === 1);
+  $('notice').classList.toggle('restore', !isNew);
+  $('noticeKind').textContent = ev.priority === 1 ? '紧急通知' : '班级留言';
+  $('noticeTitle').textContent = ev.title || '';
+  $('noticeBody').textContent = ev.body || '';
+  $('noticeAuthor').textContent = ev.author || ev.caller || '';
+  $('foot').classList.remove('has-msg');
+  setExpiry(ev);
+  scheduleLocalExpiry(ev);
+  paintProgress();
+  if (isNew) chime();
+}
+
 function render(ev, isNew) {
+  // 「当前事件」只对点人有意义：留言没有「收到」流程
   currentEvent = ev.type === 'call' ? ev : null;
+  shownEventId = ev.type === 'clear' ? 0 : (ev.id || 0);
+  renderQueueHint(ev);
+  if (ev.type === 'announcement') {
+    if (!ev.title && !ev.body) return render({ type: 'clear' }, false);
+    return renderAnnouncement(ev, isNew);
+  }
   if (ev.type !== 'call') {
     cancelLocalExpiry();
-    document.body.classList.remove('active');
+    document.body.classList.remove('active', 'notice', 'urgent');
     currentNames = [];
     expiryLocal = null;
     $('progress').classList.remove('on');
     return;
   }
+  document.body.classList.remove('notice', 'urgent');
 
   currentNames = ev.names || [];
   const box = $('names');
@@ -354,14 +396,7 @@ function render(ev, isNew) {
   $('foot').classList.toggle('has-msg', Boolean(ev.message));
   document.body.classList.add('active');
 
-  if (ev.expiresAt) {
-    const skew = Date.now() - ev.serverTime;
-    expiryLocal = ev.expiresAt + skew;
-    totalMs = ev.expiresAt - ev.createdAt;
-  } else {
-    expiryLocal = null;
-  }
-
+  setExpiry(ev);
   scheduleLocalExpiry(ev);
   layout();
   paintProgress();

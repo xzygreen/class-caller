@@ -45,11 +45,24 @@ test('大屏 exe 必须绑定 class_id：缺失拒绝启动，串班帧拒收，
   assert.ok(source.includes('CLASS_NOT_FOUND'));
   assert.ok(source.includes('static void paint_bind_error('));
   assert.ok(source.includes('L"班级绑定错误"'));
-  assert.ok(source.includes('if (g_bind_error && event->is_call)'), '绑定错误期间不显示任何通知');
+  assert.ok(source.includes('if (g_bind_error && (event->is_call || event->is_announcement))'), '绑定错误期间不显示任何通知');
   assert.ok(source.includes('g_class_code'), '顶栏显示班级编号');
   assert.ok(source.includes('#define CC_APP_TITLE     L"老师找人通知大屏"'), '程序名改为老师找人通知大屏');
   assert.ok(source.includes('L"%ls · " CC_APP_TITLE, info->name'), '窗口标题带班级名');
   assert.ok(!source.includes('班主任'), '大屏程序不再出现班主任字样');
+});
+
+test('大屏 exe 支持班级留言版式：解析 title/body/author/priority/queued，留言没有「收到」按钮', () => {
+  assert.ok(source.includes('int is_announcement;'));
+  assert.ok(source.includes('wcscmp(key, L"title") == 0') && source.includes('wcscmp(key, L"body") == 0'));
+  assert.ok(source.includes('wcscmp(key, L"author") == 0') && source.includes('wcscmp(key, L"priority") == 0') && source.includes('wcscmp(key, L"queued") == 0'));
+  assert.ok(source.includes('wcscmp(type, L"announcement") == 0'));
+  assert.ok(source.includes('static void paint_announcement('), '留言有独立版式');
+  assert.ok(source.includes('static void paint_queue_hint('), '显示等待队列提示');
+  assert.ok(source.includes('L"班级留言"') && source.includes('L"紧急通知"'));
+  assert.ok(source.includes('text_has_control_except_newline(event->body)'), '正文允许换行');
+  assert.ok(source.includes('} else if (g_current.is_announcement) {\n        memset(&g_ack_rect, 0, sizeof(g_ack_rect));'), '留言版式下没有「收到」命中区域');
+  assert.ok(source.includes('--preview-notice'));
 });
 
 test('大屏 exe 实现「收到」按钮、开机自启，标题栏没有关闭指引', () => {
@@ -121,4 +134,6 @@ test('存在编译产物时验证 MZ、i386、PE32 与 GUI 子系统', () => {
   assert.ok(data.includes(Buffer.from('老师找人通知大屏', 'utf16le')), '编译产物必须带新的程序名');
   assert.ok(!data.includes(Buffer.from('班主任', 'utf16le')), '编译产物不得再出现班主任字样');
   assert.ok(data.includes(Buffer.from('caller', 'utf16le')), '编译产物必须解析通知里的找人身份');
+  assert.ok(data.includes(Buffer.from('announcement', 'utf16le')), '编译产物必须识别留言快照');
+  assert.ok(data.includes(Buffer.from('班级留言', 'utf16le')), '编译产物必须带留言版式文案');
 });

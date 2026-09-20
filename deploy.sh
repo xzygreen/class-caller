@@ -5,6 +5,7 @@ set -Eeuo pipefail
 
 SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 APP_DIR=/opt/class-caller
+DATA_DIR=/var/lib/class-caller
 APP_USER=classcaller
 APP_GROUP=classcaller
 PORT=3000
@@ -18,8 +19,8 @@ if [ "${EUID:-$(id -u)}" -ne 0 ]; then
   fail "请以 root 运行：sudo bash '$SOURCE_DIR/deploy.sh'"
 fi
 
-required_files=(server.js package.json students.json class-caller.service)
-required_dirs=(lib public test)
+required_files=(server.js package.json class-caller.service)
+required_dirs=(lib public test scripts)
 for item in "${required_files[@]}"; do
   [ -f "$SOURCE_DIR/$item" ] || fail "缺少部署文件：$SOURCE_DIR/$item"
 done
@@ -61,7 +62,7 @@ trap 'rm -f "$TEST_LOG"' EXIT
 if ! (
   cd "$SOURCE_DIR"
   if command -v timeout >/dev/null 2>&1; then
-    timeout 180 "$NODE_BIN" --test test/*.test.js
+    timeout 300 "$NODE_BIN" --test test/*.test.js
   else
     "$NODE_BIN" --test test/*.test.js
   fi
@@ -75,19 +76,17 @@ grep -E '^# (tests|pass|fail)' "$TEST_LOG" | sed 's/^/    /' || true
 rm -f "$TEST_LOG"
 trap - EXIT
 
-# 服务器上保留的旧 students.json 若还是单班格式，新版本起不来。先用新代码校验，
-# 不通过就在改动线上目录之前停下，让旧服务继续跑。
-if [ -f "$APP_DIR/students.json" ]; then
-  echo "==> 校验线上 $APP_DIR/students.json 是否为 version 2 多班级格式"
+# 已有数据仓库时先用新代码试载入（含版本迁移），失败就在改动线上目录之前停下。
+if [ -f "$DATA_DIR/db.json" ]; then
+  echo "==> 校验线上数据仓库 $DATA_DIR/db.json 能否被新版本载入"
   if ! CHECK_MSG="$(cd "$SOURCE_DIR" && "$NODE_BIN" -e '
-    const { normalize } = require("./lib/config");
-    const raw = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const c = normalize(raw);
-    console.log(c.classes.map((k) => `${k.name}(${k.id}) ${k.students.length} 人`).join("、"));
-  ' "$APP_DIR/students.json" 2>&1)"; then
-    echo "    !! 线上 students.json 无法通过新版本校验，尚未改动线上目录：" >&2
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const { migrate } = require("./lib/store");
+    const db = migrate(JSON.parse(fs.readFileSync(process.argv[1], "utf8")));
+    console.log(`版本 ${db.version}：${db.classes.length} 个班级、${db.users.length} 个账号、${db.schedules.length} 个定时任务`);
+  ' "$DATA_DIR/db.json" 2>&1)"; then
+    echo "    !! 线上数据仓库无法通过新版本校验，尚未改动线上目录：" >&2
     echo "       $CHECK_MSG" >&2
-    echo "       请先按 README 把它改成 { \"version\": 2, \"classes\": [ ... ] } 格式，再重新运行 deploy.sh" >&2
     exit 1
   fi
   echo "    OK：$CHECK_MSG"
@@ -110,55 +109,52 @@ fi
 echo "==> 安装到 $APP_DIR"
 mkdir -p "$APP_DIR"
 
-# 已有名单先备份且不覆盖：升级不应改动服务器上的班级配置。
-if [ -f "$APP_DIR/students.json" ]; then
-  backup="$APP_DIR/students.json.bak.$(date -u +%Y%m%dT%H%M%SZ)"
-  if [ -e "$backup" ]; then
-    backup="$backup.$$"
-  fi
-  cp -a -- "$APP_DIR/students.json" "$backup"
-  echo "    已备份原有 students.json：$backup"
+# 数据目录：账号、名单、记录都在这里，升级绝不覆盖；先备份一份
+mkdir -p "$DATA_DIR"
+if [ -f "$DATA_DIR/db.json" ]; then
+  backup="$DATA_DIR/db.json.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+  [ -e "$backup" ] && backup="$backup.$$"
+  cp -a -- "$DATA_DIR/db.json" "$backup"
+  echo "    已备份数据仓库：$backup"
 fi
 
-rm -rf -- "$APP_DIR/lib" "$APP_DIR/public" "$APP_DIR/test"
-cp -a -- "$SOURCE_DIR/lib" "$SOURCE_DIR/public" "$SOURCE_DIR/test" "$APP_DIR/"
+# 旧版 students.json：首次启动时会自动导入（忽略其中的班级密码），之后不再需要。
+if [ -f "$APP_DIR/students.json" ] && [ ! -f "$DATA_DIR/db.json" ]; then
+  echo "    检测到旧版 students.json：新版本首次启动会把班级和名单导入数据仓库（班级密码将被丢弃）"
+fi
+
+rm -rf -- "$APP_DIR/lib" "$APP_DIR/public" "$APP_DIR/test" "$APP_DIR/scripts"
+cp -a -- "$SOURCE_DIR/lib" "$SOURCE_DIR/public" "$SOURCE_DIR/test" "$SOURCE_DIR/scripts" "$APP_DIR/"
 install -m 0644 "$SOURCE_DIR/server.js" "$APP_DIR/server.js"
 install -m 0644 "$SOURCE_DIR/package.json" "$APP_DIR/package.json"
-if [ ! -f "$APP_DIR/students.json" ]; then
+if [ ! -f "$APP_DIR/students.json" ] && [ -f "$SOURCE_DIR/students.json" ] && [ ! -f "$DATA_DIR/db.json" ]; then
   install -m 0640 "$SOURCE_DIR/students.json" "$APP_DIR/students.json"
-  echo "    已安装初始 students.json"
+  echo "    已安装初始 students.json（仅用于首次导入名单）"
 fi
 
-# 部署包中有这些说明或 Windows 启动器源码时一并归档；Linux 部署不会构建 Windows 成品。
-if [ -f "$SOURCE_DIR/README.md" ]; then
-  install -m 0644 "$SOURCE_DIR/README.md" "$APP_DIR/README.md"
-fi
-if [ -f "$SOURCE_DIR/docs/windows-launcher.md" ]; then
-  mkdir -p "$APP_DIR/docs"
-  install -m 0644 "$SOURCE_DIR/docs/windows-launcher.md" "$APP_DIR/docs/windows-launcher.md"
-fi
-if [ -d "$SOURCE_DIR/windows-launcher" ]; then
-  rm -rf -- "$APP_DIR/windows-launcher"
-  cp -a -- "$SOURCE_DIR/windows-launcher" "$APP_DIR/windows-launcher"
-fi
-if [ -f "$SOURCE_DIR/docs/upgrade-multiclass.md" ]; then
-  mkdir -p "$APP_DIR/docs"
-  install -m 0644 "$SOURCE_DIR/docs/upgrade-multiclass.md" "$APP_DIR/docs/upgrade-multiclass.md"
-fi
-if [ -f "$SOURCE_DIR/docs/windows-display.md" ]; then
-  mkdir -p "$APP_DIR/docs"
-  install -m 0644 "$SOURCE_DIR/docs/windows-display.md" "$APP_DIR/docs/windows-display.md"
-fi
-if [ -d "$SOURCE_DIR/windows-display" ]; then
-  rm -rf -- "$APP_DIR/windows-display"
-  cp -a -- "$SOURCE_DIR/windows-display" "$APP_DIR/windows-display"
-fi
+for doc in README.md docs/windows-launcher.md docs/windows-display.md docs/upgrade-multiclass.md docs/upgrade-accounts.md; do
+  if [ -f "$SOURCE_DIR/$doc" ]; then
+    mkdir -p "$APP_DIR/$(dirname "$doc")"
+    install -m 0644 "$SOURCE_DIR/$doc" "$APP_DIR/$doc"
+  fi
+done
+for dir in windows-launcher windows-display; do
+  if [ -d "$SOURCE_DIR/$dir" ]; then
+    rm -rf -- "$APP_DIR/$dir"
+    cp -a -- "$SOURCE_DIR/$dir" "$APP_DIR/$dir"
+  fi
+done
 
-# 服务以只读方式运行；名单归 root 所有，服务账号只有读取权限。
+# 代码目录只读；数据目录只有服务账号可读写。
 chown -R root:root "$APP_DIR"
 chmod -R go-w "$APP_DIR"
-chmod 0640 "$APP_DIR/students.json"
-chown root:"$APP_GROUP" "$APP_DIR/students.json"
+if [ -f "$APP_DIR/students.json" ]; then
+  chmod 0640 "$APP_DIR/students.json"
+  chown root:"$APP_GROUP" "$APP_DIR/students.json"
+fi
+chown -R "$APP_USER":"$APP_GROUP" "$DATA_DIR"
+chmod 0700 "$DATA_DIR"
+find "$DATA_DIR" -type f -exec chmod 0600 {} +
 
 echo "==> 校验并注册 systemd 服务"
 UNIT_FILE="$(mktemp /tmp/class-caller-service.XXXXXX.service)"
@@ -180,7 +176,7 @@ systemctl restart class-caller
 echo "==> 回环地址联通性自检"
 healthy=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if curl -fsS "http://127.0.0.1:$PORT/api/public/classes" | grep -q '"ok":true'; then
+  if curl -fsS "http://127.0.0.1:$PORT/api/public/status" | grep -q '"ok":true'; then
     healthy=1
     break
   fi
@@ -193,10 +189,17 @@ else
   exit 1
 fi
 
+if curl -fsS "http://127.0.0.1:$PORT/api/public/status" | grep -q '"setupRequired":true'; then
+  echo
+  echo "    !! 尚未创建管理员。请立即执行（密码不会被记录）："
+  echo "       cd $APP_DIR && sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN scripts/init-admin.js"
+fi
+
 systemctl --no-pager --lines=5 status class-caller
 echo
 echo "完成。接下来："
-echo "  1. 改班级配置（version 2 多班格式，见 README）：sudoedit $APP_DIR/students.json && systemctl restart class-caller"
-echo "  2. 配 Nginx：参考 $SOURCE_DIR/nginx.conf.example（Node 只听 127.0.0.1，必须走反代）"
-echo "  3. 看日志：journalctl -u class-caller -f"
-printf '%s\n' '  4. Windows assets are not built or installed by this script; build/copy them separately to D:\tools.'
+echo "  1. 创建首个管理员（若上面提示未创建）：cd $APP_DIR && sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN scripts/init-admin.js"
+echo "  2. 打开 https://你的域名/admin.html 维护班级、名单、作息，审批教师申请"
+echo "  3. 配 Nginx：参考 $SOURCE_DIR/nginx.conf.example（Node 只听 127.0.0.1，必须走反代）"
+echo "  4. 看日志：journalctl -u class-caller -f"
+printf '%s\n' '  5. Windows assets are not built or installed by this script; build via GitHub Actions or docs/windows-display.md.'
