@@ -265,7 +265,7 @@ t('记录页统一时间线：可按类型、教师、日期筛选', async () =>
     assert.strictEqual((await client.cget(A, 'activity?type=call')).json.activity.length, 1);
     assert.strictEqual((await client.cget(A, 'activity?type=announcement')).json.activity.length, 1);
     assert.strictEqual((await client.cget(A, `activity?author=${liUser.id}`)).json.activity.length, 0);
-    const today = new Date(s.clock.now()).toISOString().slice(0, 10);
+    const today = require('../lib/timewin').zoned(s.clock.now()).date;
     assert.strictEqual((await client.cget(A, `activity?date=${today}`)).json.activity.length, 2);
     assert.strictEqual((await client.cget(A, 'activity?date=2000-01-01')).json.activity.length, 0);
   } finally { await s.stop(); }
