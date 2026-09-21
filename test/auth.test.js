@@ -79,6 +79,10 @@ t('登录：错误凭据 401 且不区分用户是否存在；登出后 Cookie �
     assert.strictEqual(ok.status, 200);
     assert.strictEqual(ok.json.user.role, 'admin');
     const cookie = cookieOf(ok);
+    const malformed = await req(s.base, 'POST', '/api/auth/logout', { cookie, raw: '{坏json' });
+    assert.strictEqual(malformed.status, 400);
+    assert.strictEqual(malformed.json.error, 'INVALID_JSON');
+    assert.strictEqual((await req(s.base, 'GET', '/api/me', { cookie })).status, 200, '无效请求体不得仍然执行登出');
     const out = await req(s.base, 'POST', '/api/auth/logout', { cookie, body: {} });
     assert.strictEqual(out.status, 200);
     assert.match(out.headers['set-cookie'][0], /Max-Age=0/);

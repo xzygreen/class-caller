@@ -124,7 +124,7 @@ sudo bash ./deploy.sh
 
 脚本会检查 Node.js、运行全部测试、校验线上数据仓库能否被新版本载入、创建低权限 `classcaller` 用户、安装到 `/opt/class-caller`（只读）、把数据目录设为 `/var/lib/class-caller`（0700）、注册并重启 systemd 服务，最后做健康检查。若还没有管理员，脚本会提示创建命令。
 
-请参考 [`nginx.conf.example`](nginx.conf.example) 配置 HTTPS 反向代理：SSE 路径关闭缓冲和 gzip；务必透传 `X-Real-IP`（登录限速）与 `X-Forwarded-Proto`（Cookie 加 `Secure`）。
+请参考 [`nginx.conf.example`](nginx.conf.example) 配置 HTTPS 反向代理：SSE 路径关闭缓冲和 gzip；务必透传 `X-Real-IP`（登录限速）与 `X-Forwarded-Proto`（Cookie 加 `Secure`），并明确设置 `auth_basic off`。若接入 Cloudflare，必须让 `/api/*` 跳过 Managed Challenge、Under Attack Mode 和 Access 登录，也不要缓存 API；否则教师端会拿到挑战页，浏览器或原生大屏的 SSE 也无法连接。
 
 常用命令：
 

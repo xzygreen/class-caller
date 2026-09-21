@@ -30,6 +30,21 @@ done
 compgen -G "$SOURCE_DIR/test/*.test.js" >/dev/null \
   || fail "没有找到测试文件：$SOURCE_DIR/test/*.test.js"
 
+# v1 的这些测试依赖已经移除的共享班级密码接口。若把新版压缩包直接覆盖
+# 解压到旧目录，它们会残留下来并与 v2 代码一起被执行，产生大量假失败。
+obsolete_tests=(ack.test.js config.test.js history.test.js isolation.test.js server.test.js)
+found_obsolete=()
+for item in "${obsolete_tests[@]}"; do
+  [ ! -e "$SOURCE_DIR/test/$item" ] || found_obsolete+=("$item")
+done
+if [ "${#found_obsolete[@]}" -gt 0 ]; then
+  printf '    !! 检测到旧版本残留测试文件：%s\n' "${found_obsolete[*]}" >&2
+  printf '       请删除：' >&2
+  printf ' %q' "${found_obsolete[@]/#/$SOURCE_DIR/test/}" >&2
+  printf '\n       然后重新运行部署；不要把新版覆盖解压到旧源码目录。\n' >&2
+  exit 1
+fi
+
 echo "==> 源目录：$SOURCE_DIR"
 echo "==> 检查 Node.js"
 NODE_MAJOR=0
@@ -59,20 +74,22 @@ fi
 echo "==> 在源目录跑一遍全部自测"
 TEST_LOG="$(mktemp /tmp/class-caller-test.XXXXXX.log)"
 trap 'rm -f "$TEST_LOG"' EXIT
+# 部署目标常是小内存 VPS。Node 默认会按可见 CPU 数并发运行测试文件，
+# 多个 scrypt 密码测试同时执行时可能触发大量换页，看起来像部署卡死。
+# 串行运行更稳妥；用 tee 实时显示进度，完整输出同时留在失败日志里。
 if ! (
   cd "$SOURCE_DIR"
   if command -v timeout >/dev/null 2>&1; then
-    timeout 300 "$NODE_BIN" --test test/*.test.js
+    timeout 300 "$NODE_BIN" --test --test-concurrency=1 test/*.test.js
   else
-    "$NODE_BIN" --test test/*.test.js
+    "$NODE_BIN" --test --test-concurrency=1 test/*.test.js
   fi
-) >"$TEST_LOG" 2>&1; then
+) 2>&1 | tee "$TEST_LOG"; then
   trap - EXIT
   echo "    !! 自测未通过，尚未改动线上目录。日志：$TEST_LOG" >&2
   tail -n 40 "$TEST_LOG" >&2
   exit 1
 fi
-grep -E '^# (tests|pass|fail)' "$TEST_LOG" | sed 's/^/    /' || true
 rm -f "$TEST_LOG"
 trap - EXIT
 
@@ -200,6 +217,7 @@ echo
 echo "完成。接下来："
 echo "  1. 创建首个管理员（若上面提示未创建）：cd $APP_DIR && sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN scripts/init-admin.js"
 echo "  2. 打开 https://你的域名/admin.html 维护班级、名单、作息，审批教师申请"
-echo "  3. 配 Nginx：参考 $SOURCE_DIR/nginx.conf.example（Node 只听 127.0.0.1，必须走反代）"
+echo "  3. 用新版 $SOURCE_DIR/nginx.conf.example 更新 Nginx（必须 auth_basic off，SSE 必须关闭缓冲）"
 echo "  4. 看日志：journalctl -u class-caller -f"
-printf '%s\n' '  5. Windows assets are not built or installed by this script; build via GitHub Actions or docs/windows-display.md.'
+echo "  5. 若使用 Cloudflare：让 /api/* 跳过 Managed Challenge、Under Attack Mode、Access 和缓存"
+printf '%s\n' '  6. Windows assets are not built or installed by this script; build via GitHub Actions or docs/windows-display.md.'

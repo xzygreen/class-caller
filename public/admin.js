@@ -28,7 +28,7 @@ function toast(text, bad) {
 }
 const dt = (ms) => { if (!ms) return '—'; const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${d.toTimeString().slice(0, 8)}`; };
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
-function errText(res, fb) { if (res.status === 0) return '连不上服务器'; const m = (res.json && res.json.message) || fb; return res.json && res.json.detail ? m + '：' + res.json.detail : m; }
+function errText(res, fb) { if (res.status === 0) return '连不上服务器'; if (res.gatewayError) return res.gatewayError; const m = (res.json && res.json.message) || fb; return res.json && res.json.detail ? m + '：' + res.json.detail : m; }
 
 async function api(method, path, body) {
   let res;
@@ -36,9 +36,15 @@ async function api(method, path, body) {
     res = await fetch(path, { method, headers: body !== undefined ? { 'Content-Type': 'application/json' } : {}, body: body !== undefined ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
   } catch { return { status: 0, ok: false, json: null }; }
   const json = await res.json().catch(() => null);
-  if (res.status === 401) gateOut('登录已失效，请重新登录');
+  const challenged = res.headers.get('cf-mitigated') === 'challenge';
+  const basic = res.headers.has('www-authenticate');
+  let gatewayError = '';
+  if (!json && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请对 /api/* 关闭 Managed Challenge';
+  else if (!json && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
+  else if (!json && !res.ok) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
+  if (res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) gateOut('登录已失效，请重新登录');
   if (res.status === 403 && json && json.error === 'ADMIN_ONLY') gateOut('该账号不是管理员');
-  return { status: res.status, ok: res.ok, json };
+  return { status: res.status, ok: res.ok, json, gatewayError };
 }
 
 function showDialog(title, node) { $('dlgTitle').textContent = title; $('dlgBody').innerHTML = ''; $('dlgBody').append(node); $('dlg').showModal(); }
@@ -420,6 +426,6 @@ $('revokeAll').onclick = async () => {
   const res = await api('GET', '/api/me');
   if (res.ok && res.json.user.role === 'admin') enter(res.json.user);
   else if (res.ok) gateOut('该账号不是管理员，请使用教师端');
-  else gateOut(res.status === 0 ? '连不上服务器' : '');
+  else gateOut(res.status === 0 ? '连不上服务器' : (res.gatewayError || ''));
   setInterval(() => { if (me && view === 'overview') loadOverview(); }, 15000);
 })();

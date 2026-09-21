@@ -57,14 +57,23 @@ async function api(method, path, body) {
     return { status: 0, ok: false, json: null };
   }
   const json = await res.json().catch(() => null);
-  if (res.status === 401) { gateOut(json && json.error === 'ACCOUNT_DISABLED' ? '账号已停用，请联系管理员' : '登录已失效，请重新登录'); }
+  const challenged = res.headers.get('cf-mitigated') === 'challenge';
+  const basic = res.headers.has('www-authenticate');
+  let gatewayError = '';
+  if (!json && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请让管理员对 /api/* 关闭 Managed Challenge 后重试';
+  else if (!json && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
+  else if (!json && !res.ok) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
+  if (res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) {
+    gateOut(json.error === 'ACCOUNT_DISABLED' ? '账号已停用，请联系管理员' : '登录已失效，请重新登录');
+  }
   if (res.status === 403 && json && json.error === 'PASSWORD_CHANGE_REQUIRED') { showPasswordGate(); }
-  return { status: res.status, ok: res.ok, json };
+  return { status: res.status, ok: res.ok, json, gatewayError };
 }
 const cpath = (sub) => '/api/classes/' + encodeURIComponent(classId) + '/' + sub;
 
 function errText(res, fallback) {
   if (res.status === 0) return '连不上服务器';
+  if (res.gatewayError) return res.gatewayError;
   const m = (res.json && res.json.message) || fallback;
   return res.json && res.json.detail ? m + '：' + res.json.detail : m;
 }
@@ -758,6 +767,6 @@ $('actReset').onclick = () => { $('actType').value = ''; $('actAuthor').value = 
   } else if (res.status === 0) {
     showGate('loginForm', '连不上服务器');
   } else {
-    showGate('loginForm', '');
+    showGate('loginForm', res.gatewayError || '');
   }
 })();

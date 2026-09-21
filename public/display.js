@@ -14,15 +14,15 @@ function classPath(sub) {
   return '/api/classes/' + encodeURIComponent(classId) + '/' + sub;
 }
 
-function showBindError(title, detail) {
+function showBindError(title, detail, retrying = false) {
   document.body.classList.add('bind-error');
-  document.body.classList.remove('active');
+  document.body.classList.remove('active', 'notice', 'urgent');
   $('bindTitle').textContent = title;
   $('bindDetail').textContent = detail;
   $('klass').textContent = '未绑定班级';
   $('klassCode').textContent = '';
-  // 绑定错误不是断线：没有可重连的班级，不显示“正在重新连接”
-  $('reconnect').classList.remove('show');
+  // 参数错误不会自行恢复；网关或网络故障则保留自动重试提示。
+  $('reconnect').classList.toggle('show', retrying);
   document.title = '班级绑定错误 · 老师找人通知';
 }
 
@@ -456,7 +456,57 @@ function connect() {
 }
 
 /* ================= 初始化 ================= */
-(async function init() {
+let configRetryTimer = null;
+let configAttempts = 0;
+
+function retryConfig(detail) {
+  configAttempts += 1;
+  const delay = Math.min(30_000, 2_000 * (2 ** Math.min(configAttempts - 1, 4)));
+  showBindError('暂时无法连接大屏服务', detail + '；将在 ' + Math.ceil(delay / 1000) + ' 秒后自动重试。', true);
+  clearTimeout(configRetryTimer);
+  configRetryTimer = setTimeout(loadRemoteConfig, delay);
+}
+
+async function loadRemoteConfig() {
+  let response = null;
+  let config = null;
+  try {
+    response = await fetch(classPath('public/config'), { cache: 'no-store' });
+    config = await response.json().catch(() => null);
+  } catch {}
+
+  if (!response) return retryConfig('无法连接服务器，请检查网络');
+  if (response.status === 404 && config && config.error === 'CLASS_NOT_FOUND') {
+    setConn(false, '班级不存在');
+    showBindError('班级绑定错误', '服务器上没有班级「' + classId + '」，请检查大屏链接的 class 参数。');
+    return;
+  }
+  if (!config || !response.ok || !config.ok) {
+    let detail = '服务器返回 HTTP ' + response.status + '，且不是大屏接口响应';
+    if (response.headers.get('cf-mitigated') === 'challenge') {
+      detail = '请求被 Cloudflare 人机验证拦截，请让管理员对 /api/* 关闭 Managed Challenge';
+    } else if (response.headers.has('www-authenticate')) {
+      detail = '服务器仍启用了 HTTP Basic Auth，请更新 Nginx 配置并关闭 auth_basic';
+    }
+    setConn(false, '连接受阻');
+    return retryConfig(detail);
+  }
+  if (config.classId !== classId) {
+    setConn(false, '班级不匹配');
+    showBindError('班级绑定错误', '服务器返回了其它班级的数据，已拒绝连接。');
+    return;
+  }
+
+  clearTimeout(configRetryTimer);
+  configAttempts = 0;
+  document.body.classList.remove('bind-error');
+  klass = { classId: config.classId, className: config.className, code: config.code, color: config.color };
+  applyClassIdentity();
+  launcherMode = config.launcher && config.launcher.mode || 'off';
+  connect();
+}
+
+(function init() {
   syncSoundUi();
 
   if (QUERY.has('preview')) {
@@ -485,25 +535,7 @@ function connect() {
     return;
   }
 
-  let config = null;
-  try {
-    const response = await fetch(classPath('public/config'));
-    config = await response.json();
-  } catch {}
-  if (!config || !config.ok || config.classId !== classId) {
-    const gone = config && config.error === 'CLASS_NOT_FOUND';
-    setConn(false, gone ? '班级不存在' : '无法连接服务器');
-    showBindError('班级绑定错误',
-      gone ? '服务器上没有班级「' + classId + '」，请检查大屏链接的 class 参数。'
-           : '暂时无法从服务器确认班级「' + classId + '」，请检查网络后刷新。');
-    return;
-  }
-
-  klass = { classId: config.classId, className: config.className, code: config.code, color: config.color };
-  applyClassIdentity();
-  launcherMode = config.launcher && config.launcher.mode || 'off';
-
-  connect();
+  loadRemoteConfig();
 })();
 
 /* ================= 交互：点画面解锁声音 + 全屏；动鼠标露出控件 ================= */

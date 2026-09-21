@@ -11,6 +11,10 @@ server {
     listen [::]:80;
     server_name 你的域名.com;
 
+    # 本应用自带账号登录。显式关闭从 nginx.conf/http 块继承的 Basic Auth，
+    # 否则浏览器会弹出原生 Username / Password 对话框。
+    auth_basic off;
+
     # 证书续期要走 HTTP，放行这一条
     location /.well-known/acme-challenge/ { root /var/www/html; }
 
@@ -20,10 +24,13 @@ server {
 # ---------- HTTPS：正式入口 ----------
 # 说明：certbot --nginx 会自动补齐 ssl_certificate 等指令。
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    # Debian 12 自带的 nginx 1.22 不认识独立的 `http2 on;`，只能写在 listen 里。
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name 你的域名.com;
+
+    # 应用自己的登录页是唯一认证入口，不继承任何上层 Basic Auth。
+    auth_basic off;
 
     # ssl_certificate     /etc/letsencrypt/live/你的域名.com/fullchain.pem;
     # ssl_certificate_key /etc/letsencrypt/live/你的域名.com/privkey.pem;
@@ -35,14 +42,18 @@ server {
     # ---------- SSE 事件流：这段是重点 ----------
     # 大屏：/api/classes/class-a/public/stream；教师端实时：/api/classes/class-a/stream（需登录 Cookie）
     location ~ ^/api/classes/[a-z0-9-]+/(public/)?stream$ {
+        auth_basic off;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Connection '';        # 保持长连接
+        proxy_hide_header WWW-Authenticate;    # 旧上游也不得触发浏览器原生登录框
 
         proxy_buffering    off;                # 关缓冲，消息才能立刻推出去
+        proxy_request_buffering off;
         proxy_cache        off;
         gzip               off;                # gzip 会攒够一块才发，同样卡住
         chunked_transfer_encoding on;
@@ -53,11 +64,13 @@ server {
     # ---------- 页面与其余接口 ----------
     # 应用按 X-Real-IP 做登录限速，按 X-Forwarded-Proto 判断是否 HTTPS，务必保留这两个头。
     location / {
+        auth_basic off;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_hide_header WWW-Authenticate;
     }
 }

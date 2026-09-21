@@ -13,6 +13,7 @@ const adminHtml = read('admin.html');
 const adminJs = read('admin.js');
 const displayHtml = read('display.html');
 const displayJs = read('display.js');
+const nginx = fs.readFileSync(path.join(root, 'nginx.conf.example'), 'utf8');
 
 test('教师端：个人账号登录 / 注册，不再有共享班级密码；令牌只在 HttpOnly Cookie 里', () => {
   const source = teacherHtml + '\n' + teacherJs;
@@ -93,6 +94,18 @@ test('浏览器大屏：点人与留言两种版式；留言没有「收到」�
   assert.ok(displayJs.includes('ev.classId !== classId'));
   assert.ok(!displayJs.includes('teacher/'), '大屏脚本不得访问老师接口');
   assert.ok(!displayJs.includes('role=teacher'));
+  assert.ok(displayJs.includes('cf-mitigated') && displayJs.includes('www-authenticate'), '应明确诊断 Cloudflare / Basic Auth 网关拦截');
+  assert.ok(displayJs.includes('setTimeout(loadRemoteConfig') && displayJs.includes('自动重试'), '配置请求失败后应自动恢复');
+});
+
+test('教师端和管理端能区分应用登录失效与网关拦截', () => {
+  for (const source of [teacherJs, adminJs]) {
+    assert.ok(source.includes('cf-mitigated'));
+    assert.ok(source.includes('www-authenticate'));
+    assert.ok(source.includes('gatewayError'));
+  }
+  assert.ok(teacherJs.includes("['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)"));
+  assert.ok(adminJs.includes("['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)"));
 });
 
 test('页面脚本使用本地静态文件，不依赖第三方资源', () => {
@@ -102,4 +115,12 @@ test('页面脚本使用本地静态文件，不依赖第三方资源', () => {
   assert.ok(teacherHtml.includes('<script src="teacher.js"></script>'));
   assert.ok(adminHtml.includes('<script src="admin.js"></script>'));
   assert.ok(displayHtml.includes('<script src="display.js"></script>'));
+});
+
+test('反向代理显式关闭 Basic Auth，并为 SSE 关闭缓冲', () => {
+  assert.ok((nginx.match(/auth_basic off;/g) || []).length >= 3);
+  assert.ok(nginx.includes('proxy_hide_header WWW-Authenticate'));
+  assert.ok(nginx.includes('proxy_buffering    off'));
+  assert.ok(nginx.includes('proxy_request_buffering off'));
+  assert.ok(nginx.includes('gzip               off'));
 });

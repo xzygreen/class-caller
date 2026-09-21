@@ -58,7 +58,18 @@ t('创建定时提醒：必须落在允许点人的时段；字段校验；教�
     assert.strictEqual(adminList.json.schedules[0].className, '甲班');
     assert.strictEqual((await admin.patch(`/api/admin/schedules/${sch.id}`, { enabled: true })).status, 200);
     assert.strictEqual((await admin.patch(`/api/admin/schedules/${sch.id}`, { time: '09:20' })).json.error, 'SCHEDULE_OUT_OF_WINDOW');
+
+    const future = await client.cpost(A, 'schedules', {
+      names: ['学生130'], time: '11:40', startDate: '2026-10-21', endDate: '2026-11-30',
+    });
+    assert.strictEqual(future.status, 200);
+    assert.strictEqual(future.json.schedule.nextRunAt, at('2026-10-21', 11, 40), '远期开始日期也应给出下一次执行时间');
+    const invalidRange = await client.patch(cp(A, `schedules/${future.json.schedule.id}`), { endDate: '2026-10-20' });
+    assert.strictEqual(invalidRange.status, 400);
+    assert.strictEqual(invalidRange.json.error, 'INVALID_DATE', '局部更新不得绕过完整日期范围校验');
+
     assert.strictEqual((await client.del(cp(A, `schedules/${sch.id}`))).status, 200);
+    assert.strictEqual((await client.del(cp(A, `schedules/${future.json.schedule.id}`))).status, 200);
     assert.strictEqual((await client.cget(A, 'schedules')).json.schedules.length, 0);
   } finally { await s.stop(); }
 });
@@ -183,6 +194,9 @@ t('执行时重新校验：作息已关闭则跳过；学生被移出名单则�
     const paused = await client.cget(A, 'schedules');
     assert.strictEqual(paused.json.schedules[0].status, 'paused');
     assert.strictEqual(paused.json.schedules[0].pauseReason, 'STUDENT_REMOVED');
+    const cannotResume = await client.patch(cp(A, `schedules/${sch.json.schedule.id}`), { enabled: true });
+    assert.strictEqual(cannotResume.status, 400);
+    assert.strictEqual(cannotResume.json.error, 'UNKNOWN_STUDENT', '恢复任务时必须重新校验原有名单');
     s.clock.set(at(MON, 11, 45, 10));
     await s.app.scheduler.tick();
     assert.strictEqual((await client.cget(A, 'notices')).json.notices.length, 0);

@@ -185,7 +185,7 @@ exe 只使用公开接口，不需要密码：
 
 建议在管理端「班级与学生 → 编辑」里把旧的启动器模式设为 `off`，避免 `display.html` 再去尝试 `classcaller://` 协议。
 
-`nginx.conf.example` 已经满足要求（`~ ^/api/classes/[a-z0-9-]+/public/stream$` 正则匹配、`proxy_buffering off`、`gzip off`、24 小时超时）。唯一要注意的是 **Windows 7 的 TLS**：
+`nginx.conf.example` 已经满足要求（同时匹配公开与教师 SSE、`proxy_buffering off`、`gzip off`、24 小时超时、`auth_basic off`）。如果域名经过 Cloudflare，必须让 `/api/*` 跳过 Managed Challenge、Under Attack Mode 和 Access 登录；WinHTTP 不会执行挑战页里的 JavaScript，拿到 `403 Just a moment...` 时大屏必然离线。另一个要注意的是 **Windows 7 的 TLS**：
 
 - exe 强制 TLS 1.2。Windows 7 SP1 必须装有 TLS 1.2 相关更新（KB3140245 + 注册表启用，或已打全补丁），并信任证书链的根证书（Let's Encrypt 的 ISRG Root X1 需要系统根证书更新到 2021 年后）。
 - Nginx 侧确认 `ssl_protocols` 包含 `TLSv1.2`，并且证书链（`fullchain.pem`）完整。
@@ -219,6 +219,7 @@ exe 只使用公开接口，不需要密码：
 | **未连接 · 错误 12175 / 12044 / 12045** | TLS 或证书不受信任 | Windows 7：安装 TLS 1.2 支持（KB3140245 并启用 DefaultSecureProtocols，或已打全 2016 年后补丁）和根证书更新（Let's Encrypt 需 ISRG Root X1）。看 `display.log` 是否有 `enable TLS 1.2 failed`。 |
 | **未连接 · 错误 12037** | 证书日期无效 | 大屏机系统时间不对。 |
 | **未连接 · 错误 404** | 班级不存在或 Nginx 没有反代该路径 | 先看中央是否显示「班级绑定错误」：是则 `class_id=` 写错；否则确认 `server=` 只有域名、没有多余路径，Nginx 有 `location ~ ^/api/classes/[a-z0-9-]+/public/stream$`。 |
+| **未连接 · 错误 401/403** | Nginx Basic Auth 或 Cloudflare 挑战拦截了公开接口 | Nginx 明确设置 `auth_basic off`；Cloudflare 让 `/api/*` 跳过 Managed Challenge、Under Attack Mode 与 Access。 |
 | **未连接 · 错误 502/503/504** | Node 服务没起 | 服务器上 `systemctl status class-caller`。 |
 | **未连接 · 错误 1** | 返回的不是 SSE 流 | `server=` 指向了别的站点或被强制门户劫持。 |
 

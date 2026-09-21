@@ -36,25 +36,34 @@ sudo cp -a /opt/class-caller /opt/class-caller.pre-accounts
 
 ```nginx
 location ~ ^/api/classes/[a-z0-9-]+/(public/)?stream$ {
+    auth_basic off;
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Connection '';
-    proxy_buffering off; proxy_cache off; gzip off;
+    proxy_hide_header WWW-Authenticate;
+    proxy_buffering off; proxy_request_buffering off; proxy_cache off; gzip off;
     chunked_transfer_encoding on;
     proxy_read_timeout 24h; proxy_send_timeout 24h;
 }
 ```
 
-原来针对 `/api/classes/[a-z0-9-]+/teacher/` 的 `location` 可以删除。确认每个 `location` 都有 `proxy_set_header X-Forwarded-Proto $scheme;`，然后：
+原来针对 `/api/classes/[a-z0-9-]+/teacher/` 的 `location` 必须删除。HTTPS `server` 和普通 `location /` 也应写明 `auth_basic off;`；否则旧配置或上层配置会让浏览器弹出原生 Username / Password 对话框。确认每个 `location` 都有 `proxy_set_header X-Forwarded-Proto $scheme;`，然后：
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 完整示例见 [`nginx.conf.example`](../nginx.conf.example)。
+
+如果域名接入 Cloudflare，不得对 `/api/*` 使用 Managed Challenge、Under Attack Mode 或 Access 登录。浏览器 `EventSource`、WinHTTP 大屏和 JSON 请求无法把挑战页面当作接口响应。请创建 URI Path 以 `/api/` 开头的 WAF 跳过规则，并关闭该路径的缓存；网页路径仍可保留其它防护。以下响应必须是应用 JSON，而不是 `403 Just a moment...`：
+
+```bash
+curl -i https://你的域名/api/public/status
+```
 
 ## 3. 运行部署脚本
 

@@ -238,6 +238,22 @@ t('教师端能看到正在显示与等待显示；撤回会同时移出大屏�
   } finally { await s.stop(); }
 });
 
+t('再次发送已过期留言时按原持续时长重新计时', async () => {
+  const s = await start();
+  try {
+    const { client } = await teacherWithAccess(s.base, [A]);
+    const first = await client.announce(A, { title: '短留言', body: '重新发送后仍应可见', durationSeconds: 1 });
+    assert.strictEqual(first.status, 200);
+    await client.cpost(A, 'display/clear', { all: true });
+    s.clock.advance(2_000);
+    const resent = await client.cpost(A, `notices/${first.json.notice.id}/resend`);
+    assert.strictEqual(resent.status, 200);
+    assert.strictEqual(resent.json.event.type, 'announcement');
+    assert.strictEqual(resent.json.event.expiresAt - resent.json.event.createdAt, 1_000);
+    assert.strictEqual((await client.cget(A, 'status')).json.display.current.title, '短留言');
+  } finally { await s.stop(); }
+});
+
 t('队列满时返回 QUEUE_FULL', async () => {
   const s = await start();
   try {
