@@ -191,6 +191,61 @@ t('管理员停用账号后当前会话立即失效；不能停用最后一名�
   } finally { await s.stop(); }
 });
 
+t('管理端班级列表：teachers 是已授权教师数组，不被连接数覆盖；新建班级后可直接保存名单', async () => {
+  const s = await start();
+  try {
+    const { user, admin } = await teacherWithAccess(s.base, [A]);
+    const list = await admin.get('/api/admin/classes');
+    assert.strictEqual(list.status, 200);
+    const a = list.json.classes.find((c) => c.id === A);
+    assert.ok(Array.isArray(a.teachers), 'teachers 必须是数组（曾被 counts().teachers 数字覆盖，导致管理端班级页崩溃）');
+    assert.deepStrictEqual(a.teachers.map((x) => x.id), [user.id]);
+    assert.strictEqual(typeof a.displays, 'number');
+    assert.strictEqual(typeof a.teacherConnections, 'number');
+    assert.ok(Array.isArray(a.students));
+
+    const created = await admin.post('/api/admin/classes', { id: 'class-117', name: '初三117班', code: '117', color: 'blue', autoClearSeconds: 30 });
+    assert.strictEqual(created.status, 200);
+    const fresh = (await admin.get('/api/admin/classes')).json.classes.find((c) => c.id === 'class-117');
+    assert.deepStrictEqual(fresh.students, []);
+    assert.deepStrictEqual(fresh.teachers, []);
+    const saved = await admin.put('/api/admin/classes/class-117/students', { students: ['张三', '李四', '张三', ' '] });
+    assert.strictEqual(saved.status, 200);
+    assert.deepStrictEqual(saved.json.students, ['张三', '李四']);
+    assert.strictEqual((await admin.get('/api/admin/classes')).json.classes.find((c) => c.id === 'class-117').students.length, 2);
+  } finally { await s.stop(); }
+});
+
+t('管理员删除账号：会话、授权、申请、定时任务一并移除；不能删自己或最后一名管理员', async () => {
+  const s = await start();
+  try {
+    const { client, user, admin } = await teacherWithAccess(s.base, [A]);
+    const sch = await client.cpost(A, 'schedules', { names: ['学生130'], time: '08:50', weekdays: [1, 2, 3, 4, 5] });
+    assert.strictEqual(sch.status, 200);
+    const me = await admin.get('/api/me');
+    const self = await admin.del(`/api/admin/users/${me.json.user.id}`);
+    assert.strictEqual(self.status, 409);
+    assert.strictEqual(self.json.error, 'SELF_DELETE');
+
+    const gone = await admin.del(`/api/admin/users/${user.id}`);
+    assert.strictEqual(gone.status, 200);
+    assert.strictEqual(gone.json.removedSchedules, 1);
+    assert.strictEqual((await client.get('/api/me')).status, 401, '被删账号的会话立即失效');
+    assert.strictEqual((await req(s.base, 'POST', '/api/auth/login', { body: { username: TEACHER.username, password: TEACHER.password } })).status, 401);
+    assert.ok(!(await admin.get('/api/admin/users')).json.users.some((u) => u.id === user.id));
+    assert.strictEqual((await admin.get('/api/admin/schedules')).json.schedules.length, 0);
+    assert.strictEqual((await admin.get('/api/admin/classes')).json.classes.find((c) => c.id === A).teachers.length, 0);
+    assert.strictEqual((await admin.del(`/api/admin/users/${user.id}`)).status, 404);
+
+    // 登录名可以重新注册
+    const again = await register(s.base);
+    assert.strictEqual(again.user.username, TEACHER.username);
+
+    const audit = await admin.get('/api/admin/audit?limit=50');
+    assert.ok(audit.json.audit.some((e) => e.action === 'user.delete'));
+  } finally { await s.stop(); }
+});
+
 t('管理员发起密码重置：拿到一次性临时密码，看不到旧密码；教师首次登录必须改密码', async () => {
   const s = await start();
   try {

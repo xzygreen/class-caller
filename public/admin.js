@@ -12,7 +12,7 @@ const PAUSE_REASONS = {
   STUDENT_REMOVED: '学生已移出名单', CLASS_UNAVAILABLE: '班级已归档',
 };
 const ACTIONS = {
-  'user.register': '教师注册', 'user.create': '创建教师', 'user.create_admin': '创建管理员', 'user.update': '修改账号',
+  'user.register': '教师注册', 'user.create': '创建教师', 'user.create_admin': '创建管理员', 'user.update': '修改账号', 'user.delete': '删除账号',
   'user.password_change': '修改密码', 'user.bootstrap_admin': '初始化管理员', 'access.request': '申请班级', 'access.cancel': '撤回申请',
   'access.approve': '批准申请', 'access.reject': '拒绝申请', 'access.grant': '授权班级', 'access.revoke': '撤销权限',
   'class.create': '新增班级', 'class.update': '修改班级', 'class.students': '修改名单', 'class.import_legacy': '导入旧名单',
@@ -155,23 +155,31 @@ $('reqStatus').onchange = loadRequests;
 /* ================= 班级 ================= */
 $('classForm').onsubmit = async (e) => {
   e.preventDefault();
+  const id = $('cId').value.trim();
   const res = await api('POST', '/api/admin/classes', {
-    id: $('cId').value.trim(), name: $('cName').value.trim(), code: $('cCode').value.trim() || undefined, color: $('cColor').value,
+    id, name: $('cName').value.trim(), code: $('cCode').value.trim() || undefined, color: $('cColor').value,
     autoClearSeconds: Number($('cAuto').value), students: [],
   });
   if (!res.ok) return toast(errText(res, '新增失败'), true);
   toast('已新增班级，请在下方录入名单');
   $('cId').value = ''; $('cName').value = ''; $('cCode').value = '';
-  loadClasses();
+  await loadClasses();
+  // 新班级排在列表末尾，可能被上面的班级挤出视口：直接滚到它的名单框并聚焦
+  const card = $('classList').querySelector(`[data-class-id="${id}"]`);
+  if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); const ta = card.querySelector('textarea'); if (ta) ta.focus(); }
 };
 
 async function loadClasses() {
   const res = await api('GET', '/api/admin/classes');
-  if (!res.ok) return;
+  if (!res.ok) return toast(errText(res, '班级列表加载失败'), true);
   classesCache = res.json.classes;
   const box = $('classList'); box.innerHTML = '';
+  if (!classesCache.length) box.append(el('div', 'muted', '还没有班级，请先在上方新增。'));
   for (const c of classesCache) {
+    const students = Array.isArray(c.students) ? c.students : [];
+    const teachers = Array.isArray(c.teachers) ? c.teachers : [];
     const card = el('section', 'card');
+    card.dataset.classId = c.id;
     const h = el('h2');
     h.append(el('span', '', `${c.name}（${c.code}）· ${c.id}${c.status === 'archived' ? ' · 已归档' : ''}`));
     const acts = el('span', 'row');
@@ -185,14 +193,19 @@ async function loadClasses() {
       toast(c.status === 'archived' ? '已恢复' : '已归档'); loadClasses();
     };
     acts.append(edit, arch); h.append(acts); card.append(h);
-    card.append(el('div', 'muted', `${c.students.length} 名学生 · 大屏在线 ${c.displays} · 自动清屏 ${c.autoClearSeconds || '常驻'} 秒 · 教师：${c.teachers.map((t) => t.displayName).join('、') || '尚无'}`));
-    const ta = el('textarea'); ta.value = c.students.join('\n'); ta.placeholder = '每行一个姓名；也可用逗号、空格分隔粘贴'; ta.style.marginTop = '10px'; ta.style.minHeight = '140px';
+    card.append(el('div', 'muted', `${students.length} 名学生 · 大屏在线 ${c.displays || 0} · 自动清屏 ${c.autoClearSeconds || '常驻'} 秒 · 教师：${teachers.map((t) => t.displayName).join('、') || '尚无'}`));
+    const ta = el('textarea'); ta.value = students.join('\n');
+    ta.placeholder = students.length ? '每行一个姓名；也可用逗号、空格分隔粘贴' : '还没有名单。每行一个姓名，或直接粘贴用逗号、空格分隔的名单，然后点「保存名单」';
+    ta.style.marginTop = '10px'; ta.style.minHeight = '140px';
     const row = el('div', 'row end'); row.style.marginTop = '8px';
     const count = el('span', 'muted', ''); const save = el('button', 'btn btn-go btn-sm', '保存名单');
     const recount = () => { count.textContent = parseNames(ta.value).length + ' 人'; }; ta.oninput = recount; recount();
     save.onclick = async () => {
-      const students = parseNames(ta.value);
-      const x = await api('PUT', `/api/admin/classes/${c.id}/students`, { students });
+      const next = parseNames(ta.value);
+      if (!next.length && students.length && !window.confirm(`清空 ${c.name} 的全部名单？`)) return;
+      save.disabled = true;
+      const x = await api('PUT', `/api/admin/classes/${c.id}/students`, { students: next });
+      save.disabled = false;
       if (!x.ok) return toast(errText(x, '保存失败'), true);
       toast(`名单已保存（${x.json.students.length} 人）` + (x.json.pausedSchedules ? `，${x.json.pausedSchedules} 个定时任务因学生变动暂停` : ''));
       loadClasses();
@@ -282,7 +295,15 @@ function renderUsers() {
       const code = el('pre', '', r.json.tempPassword); code.style.cssText = 'font-size:22px;letter-spacing:.1em;background:var(--paper-050);padding:12px;border-radius:8px;user-select:all';
       box.append(code); showDialog('已重置 ' + u.displayName + ' 的密码', box); loadUsers();
     };
-    acts.append(edit, tog, reset); tr.append(acts);
+    const del = el('button', 'link danger', '删除');
+    del.disabled = u.id === me.id; if (del.disabled) del.title = '不能删除当前登录的账号';
+    del.onclick = async () => {
+      if (!window.confirm(`删除账号 ${u.displayName}（${u.username}）？\n其班级授权、申请与定时任务会一并移除，已发出的通知记录保留。此操作不可恢复。`)) return;
+      const r = await api('DELETE', `/api/admin/users/${u.id}`);
+      if (!r.ok) return toast(errText(r, '删除失败'), true);
+      toast('已删除账号' + (r.json.removedSchedules ? `，同时移除了 ${r.json.removedSchedules} 个定时任务` : '')); loadUsers();
+    };
+    acts.append(edit, tog, reset, del); tr.append(acts);
     tb.append(tr);
   }
 }

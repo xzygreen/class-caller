@@ -108,6 +108,13 @@ test('教师端和管理端能区分应用登录失效与网关拦截', () => {
   assert.ok(adminJs.includes("['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)"));
 });
 
+test('管理端：班级卡片对缺失字段健壮，新建后定位到名单框；账号列表提供删除', () => {
+  assert.ok(adminJs.includes("Array.isArray(c.teachers)") && adminJs.includes("Array.isArray(c.students)"), '一个字段异常不得让整个班级列表消失');
+  assert.ok(adminJs.includes("card.dataset.classId = c.id") && adminJs.includes('scrollIntoView'), '新增班级后应滚动到该班的名单框');
+  assert.ok(adminJs.includes("api('DELETE', `/api/admin/users/${u.id}`)"), '管理端应能删除账号');
+  assert.ok(adminJs.includes("u.id === me.id"), '不能删除当前登录账号');
+});
+
 test('页面脚本使用本地静态文件，不依赖第三方资源', () => {
   for (const html of [teacherHtml, adminHtml, displayHtml]) {
     assert.ok(!/<(?:script|link)[^>]+(?:src|href)=["']https?:\/\//i.test(html));
