@@ -1986,6 +1986,7 @@ static void paint_announcement(HDC dc, int w, int top, int bottom)
     /* 正文高度先量出来，再让标题 + 正文整体垂直居中 */
     body_rect.left = w * 9 / 100; body_rect.right = w - w * 9 / 100; body_rect.top = 0; body_rect.bottom = 0;
     old = SelectObject(dc, body_font);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);   /* DrawTextW 要求 TA_LEFT，否则每行按左边界居中，开头被裁掉 */
     body_h = g_current.body[0] != L'\0'
         ? DrawTextW(dc, g_current.body, -1, &body_rect, DT_CALCRECT | DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL)
         : 0;
@@ -2010,6 +2011,7 @@ static void paint_announcement(HDC dc, int w, int top, int bottom)
             body_rect.bottom = avail_bottom;
             old = SelectObject(dc, body_font);
             SetTextColor(dc, C_ON_STRONG);
+            SetTextAlign(dc, TA_LEFT | TA_TOP);
             DrawTextW(dc, g_current.body, -1, &body_rect, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
             SelectObject(dc, old);
         }
