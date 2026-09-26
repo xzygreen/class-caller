@@ -119,9 +119,19 @@ test('页面脚本使用本地静态文件，不依赖第三方资源', () => {
   for (const html of [teacherHtml, adminHtml, displayHtml]) {
     assert.ok(!/<(?:script|link)[^>]+(?:src|href)=["']https?:\/\//i.test(html));
   }
-  assert.ok(teacherHtml.includes('<script src="teacher.js"></script>'));
-  assert.ok(adminHtml.includes('<script src="admin.js"></script>'));
-  assert.ok(displayHtml.includes('<script src="display.js"></script>'));
+  assert.ok(/<script src="teacher\.js(\?v=[\w.-]+)?"><\/script>/.test(teacherHtml));
+  assert.ok(/<script src="admin\.js(\?v=[\w.-]+)?"><\/script>/.test(adminHtml));
+  assert.ok(/<script src="display\.js(\?v=[\w.-]+)?"><\/script>/.test(displayHtml));
+});
+
+test('本地 CSS / JS 引用都带当前版本号，发版后浏览器与 CDN 不会拿旧脚本配新页面', () => {
+  // Cloudflare 会把静态文件的浏览器缓存改写成数小时；换版本号就换了网址
+  const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  for (const [name, html] of [['teacher.html', teacherHtml], ['admin.html', adminHtml], ['display.html', displayHtml]]) {
+    const refs = [...html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+\.(?:css|js)[^"]*)"/g)].map((m) => m[1]);
+    assert.ok(refs.length >= 2, name + ' 应引用本地样式和脚本');
+    for (const ref of refs) assert.ok(ref.endsWith('?v=' + version), `${name} 的 ${ref} 应带 ?v=${version}（改了 package.json 版本号就要同步）`);
+  }
 });
 
 test('反向代理显式关闭 Basic Auth，并为 SSE 关闭缓冲', () => {

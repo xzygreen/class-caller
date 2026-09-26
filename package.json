@@ -1,6 +1,6 @@
 {
   "name": "class-caller",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "老师找人通知大屏：个人账号、班级授权、全校作息、定时提醒与班级留言（零运行时依赖）",
   "main": "server.js",
   "scripts": {
