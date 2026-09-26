@@ -23,7 +23,7 @@ function showBindError(title, detail, retrying = false) {
   $('klassCode').textContent = '';
   // 参数错误不会自行恢复；网关或网络故障则保留自动重试提示。
   $('reconnect').classList.toggle('show', retrying);
-  document.title = '班级绑定错误 · 老师找人通知';
+  document.title = '班级绑定错误 · Caller 大屏';
 }
 
 function applyClassIdentity() {
@@ -32,7 +32,7 @@ function applyClassIdentity() {
   $('klassCode').textContent = klass.code;
   $('stageKlass').textContent = klass.className + ' · ' + klass.code;
   document.documentElement.dataset.classColor = klass.color || '';
-  document.title = klass.className + ' · 老师找人通知';
+  document.title = klass.className + ' · Caller 大屏';
 }
 
 /* ================= 时钟 ================= */
@@ -59,6 +59,8 @@ function syncSoundUi() {
   button.setAttribute('aria-pressed', String(soundOn));
   button.querySelector('.wave').style.display = soundOn ? '' : 'none';
   button.querySelector('.mute').style.display = soundOn ? 'none' : '';
+  $('soundText').textContent = soundOn ? '提示音 开' : '提示音 关';
+  button.setAttribute('aria-label', soundOn ? '提示音已开启，点击关闭' : '提示音已关闭，点击开启');
   $('audioTip').classList.toggle('show', soundOn && audioLocked());
 }
 
@@ -98,8 +100,14 @@ $('btnSound').onclick = (event) => {
 $('btnFull').onclick = (event) => {
   event.stopPropagation();
   if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
-  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
 };
+document.addEventListener('fullscreenchange', () => {
+  const label = document.fullscreenElement ? '退出全屏' : '全屏';
+  $('fullText').textContent = label;
+  // 窄屏时按钮只剩图标，读屏靠 aria-label 读出用途
+  $('btnFull').setAttribute('aria-label', label);
+});
 
 /* ================= 排版：按容器实测像素定字号与列数 ================= */
 let currentNames = [];
@@ -120,7 +128,8 @@ function layout() {
     const gapY = height * 0.06;
     const cellWidth = (width - gapX * (columns - 1)) / columns;
     const cellHeight = (height - gapY * (rows - 1)) / rows;
-    const size = Math.min(cellWidth / (maxLength * 1.08), cellHeight / 1.52);
+    // 宽度按「姓名 + 右上角对勾」算：对勾伸出姓名右侧约 .56em，不留位置时最右一列会被屏幕边缘裁掉
+    const size = Math.min(cellWidth / (maxLength * 1.08 + 0.6), cellHeight / 1.52);
     if (size > best.size) best = { columns, size };
   }
 
@@ -253,13 +262,15 @@ async function sendAck(ev, names) {
 
 $('ack').onclick = (event) => {
   event.stopPropagation();
+  unlockAudio();
   if (currentEvent) sendAck(currentEvent, []);
 };
 $('names').onclick = (event) => {
-  const figure = event.target.closest('figure');
-  if (!figure || !currentEvent) return;
+  const item = event.target.closest('.name');
+  if (!item || !currentEvent) return;
   event.stopPropagation();
-  if (!figure.classList.contains('acked')) sendAck(currentEvent, [figure.dataset.name]);
+  unlockAudio();
+  if (!item.classList.contains('acked')) sendAck(currentEvent, [item.dataset.name]);
 };
 
 /* ================= 渲染 ================= */
@@ -292,18 +303,35 @@ function scheduleLocalExpiry(ev) {
   }, Math.max(0, expiryLocal - Date.now()));
 }
 
-function paintProgress() {
-  const wrap = $('progress');
-  const bar = wrap.firstElementChild;
-  wrap.classList.toggle('on', Boolean(expiryLocal));
-  if (!expiryLocal) return;
-
+/** 从当前剩余比例线性收到 0；没有到期时间则保持满格 */
+function deplete(bar) {
+  if (!expiryLocal) { bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)'; return; }
   const remain = Math.max(0, expiryLocal - Date.now());
   bar.style.transition = 'none';
   bar.style.transform = 'scaleX(' + (totalMs ? remain / totalMs : 0) + ')';
   void bar.offsetWidth;
   bar.style.transition = 'transform ' + remain + 'ms linear';
   bar.style.transform = 'scaleX(0)';
+}
+
+/** 留言：底部时间条 */
+function paintProgress() {
+  const wrap = $('progress');
+  wrap.classList.toggle('on', Boolean(expiryLocal));
+  if (expiryLocal) deplete(wrap.firstElementChild);
+}
+
+/** 找人：每个姓名下的金色基线就是剩余时间；确认收到后变绿并留满 */
+function paintRules(acked) {
+  for (const item of $('names').children) {
+    const bar = item.querySelector('.rule i');
+    if (acked.has(item.dataset.name)) {
+      bar.style.transition = 'transform var(--t-mid) var(--ease-out)';
+      bar.style.transform = 'scaleX(1)';
+    } else {
+      deplete(bar);
+    }
+  }
 }
 
 function renderQueueHint(ev) {
@@ -362,30 +390,36 @@ function render(ev, isNew) {
   const box = $('names');
   const acked = ackedNames(ev);
   const sameNames = !isNew && box.children.length === currentNames.length
-    && [...box.children].every((figure, index) => figure.dataset.name === currentNames[index]);
+    && [...box.children].every((item, index) => item.dataset.name === currentNames[index]);
+  const markAck = (item) => {
+    const name = item.dataset.name;
+    const done = acked.has(name);
+    item.classList.toggle('acked', done);
+    item.setAttribute('aria-label', done ? name + '，已收到' : name + '，点一下确认收到');
+    item.setAttribute('aria-pressed', String(done));
+  };
 
   if (sameNames) {
     // 只是确认状态变了：就地更新，不重放入场动画
-    [...box.children].forEach((figure) => {
-      const name = figure.dataset.name;
-      figure.classList.toggle('acked', acked.has(name));
-      figure.title = acked.has(name) ? name + ' 已收到' : '点一下：' + name + ' 收到';
-    });
+    [...box.children].forEach(markAck);
   } else {
     box.innerHTML = '';
     box.classList.toggle('restore', !isNew);
     currentNames.forEach((name, index) => {
-      const figure = document.createElement('figure');
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'name';
+      item.dataset.name = name;
       const label = document.createElement('b');
       label.textContent = name;
-      figure.appendChild(label);
-      figure.dataset.name = name;
-      figure.classList.toggle('acked', acked.has(name));
-      figure.title = acked.has(name) ? name + ' 已收到' : '点一下：' + name + ' 收到';
-      const delay = (index * 0.07) + 's';
-      label.style.animationDelay = delay;
-      figure.style.animationDelay = delay;
-      box.appendChild(figure);
+      const rule = document.createElement('span');
+      rule.className = 'rule';
+      rule.appendChild(document.createElement('i'));
+      item.append(label, rule);
+      item.insertAdjacentHTML('beforeend', '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5 9.5 18 20 6.5"/></svg>');
+      markAck(item);
+      item.style.animationDelay = (index * 0.07) + 's';
+      box.appendChild(item);
     });
   }
   renderAck(ev);
@@ -399,7 +433,8 @@ function render(ev, isNew) {
   setExpiry(ev);
   scheduleLocalExpiry(ev);
   layout();
-  paintProgress();
+  $('progress').classList.remove('on');
+  paintRules(acked);
   if (isNew) chime();
 }
 
@@ -538,21 +573,13 @@ async function loadRemoteConfig() {
   loadRemoteConfig();
 })();
 
-/* ================= 交互：点画面解锁声音 + 全屏；动鼠标露出控件 ================= */
-document.body.addEventListener('click', () => {
-  unlockAudio();
-  if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen();
-  }
-});
+/* ================= 交互：点画面只解锁声音（全屏只由「全屏」按钮触发）；动鼠标露出光标 ================= */
+document.body.addEventListener('click', unlockAudio);
+document.addEventListener('keydown', unlockAudio, { once: true });
 
-let toolsTimer;
+let cursorTimer;
 document.addEventListener('mousemove', () => {
   document.body.classList.add('show-cursor');
-  $('tools').classList.add('show');
-  clearTimeout(toolsTimer);
-  toolsTimer = setTimeout(() => {
-    document.body.classList.remove('show-cursor');
-    $('tools').classList.remove('show');
-  }, 2600);
+  clearTimeout(cursorTimer);
+  cursorTimer = setTimeout(() => document.body.classList.remove('show-cursor'), 2600);
 });

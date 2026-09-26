@@ -12,14 +12,17 @@ let students = [];
 let maxNamesPerCall = 20;
 let callWindow = null;
 let settings = { announcementPolicy: 'immediate' };
-const sel = new Set();
+const sel = new Set();          // 点人页的选择
+const schSel = new Set();       // 定时提醒自己的选择，不再依赖点人页
 let display = { current: null, queue: [] };
+let displaysOnline = 0;
 let sending = false;
 let liveStream = null;
 let cdTimer = null;
 let currentTab = 'call';
 let schedules = [];
-let noticesCache = [];
+/** 我最近一次发出的点人：信号轨道据此显示它走到了哪一步 */
+let lastSent = null;
 
 const CLASS_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -30,19 +33,6 @@ const PAUSE_REASONS = {
   STUDENT_REMOVED: '有学生已不在本班名单',
   CLASS_UNAVAILABLE: '班级已归档',
 };
-
-/* ================= 工具 ================= */
-function toast(text, bad) {
-  const el = $('toast');
-  el.textContent = text;
-  el.classList.toggle('bad', Boolean(bad));
-  el.classList.add('show');
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2800);
-}
-const hhmm = (ms) => new Date(ms).toTimeString().slice(0, 5);
-const dateTime = (ms) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${hhmm(ms)}`; };
-function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
 
 async function api(method, path, body) {
   let res;
@@ -72,7 +62,7 @@ async function api(method, path, body) {
 const cpath = (sub) => '/api/classes/' + encodeURIComponent(classId) + '/' + sub;
 
 function errText(res, fallback) {
-  if (res.status === 0) return '连不上服务器';
+  if (res.status === 0) return '连不上服务器，请检查网络后重试';
   if (res.gatewayError) return res.gatewayError;
   const m = (res.json && res.json.message) || fallback;
   return res.json && res.json.detail ? m + '：' + res.json.detail : m;
@@ -84,6 +74,7 @@ function showGate(which, message) {
   $('gate').hidden = false;
   for (const id of ['loginForm', 'registerForm', 'passwordForm']) $(id).hidden = id !== which;
   $('loginErr').textContent = which === 'loginForm' ? (message || '') : '';
+  $('loginInfo').hidden = true;
   if (which === 'loginForm') $('loginUser').focus();
   if (which === 'registerForm') $('regUser').focus();
   if (which === 'passwordForm') $('newPwd').focus();
@@ -94,18 +85,24 @@ function gateOut(message) {
   me = null;
   disconnectLive();
   clearInterval(cdTimer);
+  closeSheet();
   showGate('loginForm', message);
 }
 
 $('toRegister').onclick = () => showGate('registerForm');
 $('toLogin').onclick = () => showGate('loginForm');
-$('forgot').onclick = () => toast('请联系管理员重置密码：管理员会发给你一个临时密码，登录后需立即修改', false);
+$('forgot').onclick = () => {
+  const n = $('loginInfo');
+  n.textContent = '请联系管理员重置密码。管理员会给你一个临时密码，用它登录后需要立即改成自己的密码。';
+  n.hidden = false;
+};
 
 $('loginForm').onsubmit = async (e) => {
   e.preventDefault();
-  const b = $('loginBtn'); b.disabled = true; b.dataset.loading = '1';
+  if (!$('loginUser').value.trim() || !$('loginPwd').value) { $('loginErr').textContent = '请输入登录名和密码'; return; }
+  setBusy($('loginBtn'), true);
   const res = await api('POST', '/api/auth/login', { username: $('loginUser').value.trim(), password: $('loginPwd').value });
-  b.disabled = false; delete b.dataset.loading;
+  setBusy($('loginBtn'), false);
   if (!res.ok) { $('loginErr').textContent = errText(res, '登录失败'); $('loginPwd').select(); return; }
   $('loginPwd').value = '';
   await enter(res.json.user);
@@ -113,21 +110,23 @@ $('loginForm').onsubmit = async (e) => {
 
 $('registerForm').onsubmit = async (e) => {
   e.preventDefault();
-  const b = $('regBtn'); b.disabled = true; b.dataset.loading = '1';
+  setBusy($('regBtn'), true);
   const res = await api('POST', '/api/auth/register', {
     username: $('regUser').value.trim(), displayName: $('regName').value.trim(), title: $('regTitle').value.trim(), password: $('regPwd').value,
   });
-  b.disabled = false; delete b.dataset.loading;
+  setBusy($('regBtn'), false);
   if (!res.ok) { $('regErr').textContent = errText(res, '注册失败'); return; }
   $('regPwd').value = '';
-  toast('注册成功。请申请管理班级，管理员批准后即可点人');
+  toast('注册成功。下一步：申请管理班级');
   await enter(res.json.user);
 };
 
 $('passwordForm').onsubmit = async (e) => {
   e.preventDefault();
-  if ($('newPwd').value !== $('newPwd2').value) { $('pwdErr').textContent = '两次输入不一致'; return; }
+  if ($('newPwd').value !== $('newPwd2').value) { $('pwdErr').textContent = '两次输入的密码不一致'; return; }
+  setBusy($('pwdBtn'), true);
   const res = await api('POST', '/api/me/password', { newPassword: $('newPwd').value });
+  setBusy($('pwdBtn'), false);
   if (!res.ok) { $('pwdErr').textContent = errText(res, '修改失败'); return; }
   $('newPwd').value = ''; $('newPwd2').value = '';
   toast('密码已更新');
@@ -148,58 +147,74 @@ async function enter(user) {
   if (me.mustChangePassword) return showPasswordGate();
   $('gate').hidden = true;
   $('app').hidden = false;
-  $('whoami').textContent = (me.title ? me.title + ' · ' : '') + me.displayName + (me.role === 'admin' ? '（管理员）' : '');
+  $('avatar').textContent = initial(me.displayName);
+  $('whoName').textContent = me.displayName;
+  const head = $('whoami');
+  head.innerHTML = '';
+  head.append(me.displayName, el('small', '', me.username + (me.title ? ' · ' + me.title : '') + (me.role === 'admin' ? ' · 管理员' : '')));
+  $('toAdmin').hidden = me.role !== 'admin';
   const wanted = new URLSearchParams(location.search).get('class') || '';
   if (CLASS_ID_RE.test(wanted)) {
     if (await openClass(wanted)) return;
   }
   await showHome();
 }
+wireMenu($('whoBtn'), $('whoMenu'));
 
 /* ================= 个人工作台 ================= */
 async function showHome() {
-  classId = ''; klass = null;
+  classId = ''; klass = null; lastSent = null;
   disconnectLive();
-  document.documentElement.dataset.classColor = '';
+  closeSheet();
+  delete document.documentElement.dataset.color;
   history.replaceState(null, '', location.pathname);
   $('home').hidden = false;
   $('klassView').hidden = true;
   $('tabs').hidden = true;
   $('tray').hidden = true;
   $('backHome').hidden = true;
-  $('classBadge').hidden = true;
+  $('classStamp').hidden = true;
   $('livePill').hidden = true;
-  $('title').childNodes[0].nodeValue = '老师找人';
-  $('subtitle').textContent = '个人工作台';
-  document.title = '老师找人 · 教师端';
+  $('title').textContent = '个人工作台';
+  $('subtitle').textContent = me.displayName + (me.title ? ' · ' + me.title : '');
+  $('hello').textContent = '你好，' + callerName();
+  document.title = 'Caller · 教师端';
   await loadHome();
 }
 
 async function loadHome() {
+  fill($('myClasses'), skeleton(3));
   const res = await api('GET', '/api/me/classes');
-  if (!res.ok) return;
+  if (!res.ok) {
+    if (res.status !== 401) fill($('myClasses'), errorState(errText(res, '班级列表加载失败'), loadHome));
+    return;
+  }
   const d = res.json;
   callWindow = d.callWindow;
   renderWindowPill();
-  $('homeWindow').innerHTML = '';
-  $('homeWindow').append(windowSummary());
+  fill($('homeWindow'), windowSummary());
 
   const box = $('myClasses');
   box.innerHTML = '';
   if (!d.classes.length) {
-    box.append(el('span', 'ph', me.role === 'admin' ? '还没有任何班级；请在管理端新增班级' : '还没有获批的班级。请在下方提交申请，等待管理员审批。'));
+    box.append(me.role === 'admin'
+      ? emptyState('还没有任何班级', '请先在管理端新增班级并录入名单。', { label: '打开管理端', fn: () => { location.href = '/admin.html'; } })
+      : emptyState('还没有获批的班级', '在下方选择班级提交申请，管理员批准后这里会出现「进入班级」。', { label: '去申请', fn: () => $('requestClass').focus() }));
   }
   for (const c of d.classes) {
     const item = el('div', 'item');
-    item.dataset.status = 'active';
-    const copy = el('div');
-    copy.append(el('strong', '', `${c.name}（${c.code}）`));
-    copy.append(el('small', '', `${c.studentCount} 名学生 · 大屏 ${c.autoClearSeconds ? c.autoClearSeconds + ' 秒后自动清除' : '常驻显示'}`));
+    const stamp = el('span', 'lead stamp lg', c.code);
+    stamp.dataset.color = c.color || '';
+    const copy = el('div', 'body');
+    copy.append(el('strong', '', c.name));
+    copy.append(el('small', '', `${c.studentCount} 名学生 · 大屏${c.autoClearSeconds ? ' ' + c.autoClearSeconds + ' 秒后自动清除' : '常驻显示'}`));
     const acts = el('div', 'acts');
-    const open = el('button', 'btn btn-go btn-sm', '进入班级');
+    const open = el('button', 'btn btn-primary', '');
+    open.type = 'button';
+    open.append(el('span', '', '进入班级'));
     open.onclick = () => openClass(c.id);
     acts.append(open);
-    item.append(copy, acts);
+    item.append(stamp, copy, acts);
     box.append(item);
   }
 
@@ -207,16 +222,25 @@ async function loadHome() {
   const mine = new Set(d.classes.map((c) => c.id));
   const pending = new Set(d.requests.filter((r) => r.status === 'pending').map((r) => r.classId));
   select.innerHTML = '<option value="">选择班级</option>';
+  let options = 0;
   for (const c of d.availableClasses) {
     if (mine.has(c.id) || pending.has(c.id)) continue;
     const o = el('option', '', `${c.name}（${c.code}）`); o.value = c.id; select.append(o);
+    options += 1;
   }
+  select.disabled = options === 0;
+  if (!options) select.firstElementChild.textContent = '没有可以申请的班级';
+
   const rq = $('myRequests');
   rq.innerHTML = '';
+  if (d.requests.length) rq.style.marginTop = 'var(--gap-item)';
   for (const r of d.requests) {
+    const tone = { pending: 'warn', approved: 'ok', rejected: 'bad', cancelled: '' }[r.status] || '';
     const item = el('div', 'item');
-    item.dataset.status = r.status;
-    const copy = el('div');
+    item.dataset.tone = tone;
+    const lead = el('span', 'lead');
+    lead.append(icon({ pending: 'clock', approved: 'check', rejected: 'x', cancelled: 'undo' }[r.status] || 'info'));
+    const copy = el('div', 'body');
     const st = { pending: '待审批', approved: '已批准', rejected: '已拒绝', cancelled: '已撤回' }[r.status] || r.status;
     copy.append(el('strong', '', `${r.className} · ${st}`));
     const parts = [dateTime(r.createdAt)];
@@ -225,81 +249,99 @@ async function loadHome() {
     copy.append(el('small', '', parts.join(' · ')));
     const acts = el('div', 'acts');
     if (r.status === 'pending') {
-      const cancel = el('button', 'link danger', '撤回');
-      cancel.onclick = async () => { const x = await api('DELETE', '/api/me/class-requests/' + r.id); if (x.ok) { toast('已撤回申请'); loadHome(); } else toast(errText(x, '撤回失败'), true); };
+      const cancel = el('button', 'btn btn-ghost danger btn-sm', '撤回申请');
+      cancel.type = 'button';
+      cancel.onclick = async () => {
+        const x = await api('DELETE', '/api/me/class-requests/' + r.id);
+        if (x.ok) { toast('已撤回申请'); loadHome(); } else toast(errText(x, '撤回失败'), true);
+      };
       acts.append(cancel);
     }
-    item.append(copy, acts);
+    item.append(lead, copy, acts);
     rq.append(item);
   }
 
   const hs = $('homeSchedules');
   hs.innerHTML = '';
-  if (!d.upcomingSchedules.length && !d.pausedSchedules.length) hs.append(el('span', 'ph', '暂无'));
-  for (const s of d.pausedSchedules) {
-    const item = el('div', 'item'); item.dataset.status = 'paused';
-    const copy = el('div');
-    copy.append(el('strong', '', `${s.time} ${s.names.join('、')}`));
-    copy.append(el('small', '', '已暂停：' + (PAUSE_REASONS[s.pauseReason] || s.pauseReason || '')));
-    item.append(copy); hs.append(item);
-  }
-  for (const s of d.upcomingSchedules) {
-    const item = el('div', 'item'); item.dataset.status = 'active';
-    const copy = el('div');
-    copy.append(el('strong', '', `${s.time} ${s.names.join('、')}`));
-    copy.append(el('small', '', `下次 ${dateTime(s.nextRunAt)}${s.message ? ' · ' + s.message : ''}`));
-    item.append(copy); hs.append(item);
-  }
-  $('homeAccount').textContent = `${me.displayName}（${me.username}）${me.title ? ' · ' + me.title : ''}`;
+  if (!d.upcomingSchedules.length && !d.pausedSchedules.length) hs.append(emptyState('暂无定时提醒', '进入班级后可在「定时提醒」里创建每天固定时间的点人。'));
+  for (const s of d.pausedSchedules) hs.append(miniSchedule(s, true));
+  for (const s of d.upcomingSchedules) hs.append(miniSchedule(s, false));
+}
+
+function miniSchedule(s, paused) {
+  const item = el('div', 'item');
+  item.dataset.tone = paused ? 'bad' : 'info';
+  const lead = el('span', 'lead'); lead.append(icon(paused ? 'pause' : 'clock'));
+  const copy = el('div', 'body');
+  const t = el('strong');
+  t.append(el('span', 'num', s.time + ' '), s.names.join('、'));
+  copy.append(t);
+  copy.append(el('small', '', paused
+    ? '已暂停：' + (PAUSE_REASONS[s.pauseReason] || s.pauseReason || '')
+    : `下次 ${dateTime(s.nextRunAt)}${s.message ? ' · ' + s.message : ''}`));
+  item.append(lead, copy);
+  return item;
 }
 
 $('requestForm').onsubmit = async (e) => {
   e.preventDefault();
   const cid = $('requestClass').value;
-  if (!cid) return toast('请先选择班级', true);
+  if (!cid) { $('requestClass').focus(); return toast('请先选择要申请的班级', true); }
+  setBusy($('requestBtn'), true);
   const res = await api('POST', '/api/me/class-requests', { classId: cid, reason: $('requestReason').value.trim() });
+  setBusy($('requestBtn'), false);
   if (!res.ok) return toast(errText(res, '提交失败'), true);
   $('requestReason').value = '';
   toast('申请已提交，等待管理员审批');
   loadHome();
 };
 
-$('changePwd').onclick = () => { $('pwdChangeErr').textContent = ''; $('pwdDialog').showModal(); };
+$('changePwd').onclick = () => { $('pwdChangeErr').hidden = true; $('pwdDialog').showModal(); $('curPwd').focus(); };
 $('pwdCancel').onclick = () => $('pwdDialog').close();
 $('pwdChangeForm').onsubmit = async (e) => {
   e.preventDefault();
+  setBusy($('pwdSave'), true);
   const res = await api('POST', '/api/me/password', { currentPassword: $('curPwd').value, newPassword: $('nxtPwd').value });
-  if (!res.ok) { $('pwdChangeErr').textContent = errText(res, '修改失败'); return; }
+  setBusy($('pwdSave'), false);
+  if (!res.ok) { $('pwdChangeErr').textContent = errText(res, '修改失败'); $('pwdChangeErr').hidden = false; return; }
   $('curPwd').value = ''; $('nxtPwd').value = '';
   $('pwdDialog').close();
   toast('密码已更新，其它设备需要重新登录');
 };
 $('backHome').onclick = showHome;
+$('brandHome').onclick = (e) => { if (!me) return; e.preventDefault(); showHome(); };
 
 /* ================= 作息提示 ================= */
+function nextText(n) {
+  if (!n) return '';
+  return (n.date === callWindow.now.date ? '今天 ' : n.weekdayName + ' ') + n.start + '–' + n.end;
+}
 function windowSummary() {
   const box = el('div');
   if (!callWindow) return box;
+  const n = el('div', 'note ' + (callWindow.open ? 'ok' : 'warn'));
+  n.append(icon(callWindow.open ? 'check' : 'clock'));
   if (callWindow.open) {
-    box.append(el('div', 'note ok', `现在可以点人：${callWindow.current.start}–${callWindow.current.end}${callWindow.current.label ? '（' + callWindow.current.label + '）' : ''}`));
+    n.append(el('span', '', `现在可以点人：${callWindow.current.start}–${callWindow.current.end}${callWindow.current.label ? '（' + callWindow.current.label + '）' : ''}`));
   } else {
-    const n = callWindow.next;
-    box.append(el('div', 'note warn', '当前正在上课，暂不能点人' + (n ? `。下次可用时间：${n.date === callWindow.now.date ? '' : n.weekdayName + ' '}${n.start}–${n.end}` : '')));
+    n.append(el('span', '', '当前正在上课，暂不能点人' + (callWindow.next ? '。下次可用时间：' + nextText(callWindow.next) : '')));
   }
+  box.append(n);
   return box;
 }
 
 function renderWindowPill() {
   const pill = $('windowPill');
   if (!callWindow) return;
-  pill.className = 'pill ' + (callWindow.open ? 'on' : 'warn');
+  pill.className = 'status ' + (callWindow.open ? 'ok' : 'warn');
   $('windowText').textContent = callWindow.open
     ? `可点人至 ${callWindow.current.end}`
-    : (callWindow.next ? `上课中 · 下次 ${callWindow.next.date === callWindow.now.date ? '' : callWindow.next.weekdayName + ' '}${callWindow.next.start}` : '上课中');
+    : (callWindow.next ? `上课中 · ${callWindow.next.date === callWindow.now.date ? '' : callWindow.next.weekdayName + ' '}${callWindow.next.start} 可点` : '上课中');
   const notice = $('windowNotice');
   if (callWindow.open) { notice.hidden = true; } else {
     notice.hidden = false;
-    notice.textContent = '当前正在上课，暂不能点人' + (callWindow.next ? `。下次可用时间：${callWindow.next.start}–${callWindow.next.end}` : '');
+    notice.innerHTML = '';
+    notice.append(icon('clock'), el('span', '', '当前正在上课，暂不能点人' + (callWindow.next ? `。下次可用时间：${nextText(callWindow.next)}` : '') + '。可以先选好学生，到时间再发送。'));
   }
   renderPicked();
 }
@@ -321,26 +363,30 @@ async function openClass(id) {
   callWindow = d.callWindow;
   settings = d.settings || settings;
   display = d.display;
-  sel.clear();
-  $('msg').value = ''; $('search').value = '';
+  lastSent = null;
+  sel.clear(); schSel.clear();
+  $('msg').value = ''; $('search').value = ''; $('schSearch').value = '';
 
   const url = new URL(location.href); url.searchParams.set('class', id); history.replaceState(null, '', url);
-  document.documentElement.dataset.classColor = klass.color;
   $('home').hidden = true;
   $('klassView').hidden = false;
   $('tabs').hidden = false;
   $('backHome').hidden = false;
-  $('classBadge').hidden = false;
-  $('classBadge').textContent = '当前班级：' + klass.className + ' ' + klass.code;
+  const stamp = $('classStamp');
+  stamp.hidden = false;
+  stamp.textContent = klass.code;
+  stamp.dataset.color = klass.color || '';
   $('livePill').hidden = false;
-  $('title').childNodes[0].nodeValue = klass.className + '　老师找人';
-  $('subtitle').textContent = '共 ' + students.length + ' 名同学' + (d.autoClearSeconds ? ' · 大屏 ' + d.autoClearSeconds + ' 秒后自动清除' : '');
-  document.title = klass.className + ' · 老师找人';
-  $('nowTitle').textContent = klass.className + '大屏正在显示';
-  $('callerLabel').textContent = '发起人：' + callerLabel();
+  $('title').textContent = klass.className;
+  $('subtitle').textContent = students.length + ' 名同学' + (d.autoClearSeconds ? ' · 大屏 ' + d.autoClearSeconds + ' 秒后自动清除' : ' · 大屏常驻显示');
+  document.title = klass.className + ' · Caller';
+  $('nowTitle').textContent = klass.className + '大屏';
+  $('callerLabel').textContent = '大屏上显示的发起人：' + callerLabel();
   $('annUrgentField').hidden = me.role !== 'admin';
-  $('annPolicyNote').textContent = settings.announcementPolicy === 'next_window' && me.role !== 'admin'
-    ? '学校设置：上课期间发布的留言会等到下一个课间再显示。' : '';
+  const policy = settings.announcementPolicy === 'next_window' && me.role !== 'admin';
+  $('annPolicyNote').hidden = !policy;
+  $('annPolicyNote').textContent = policy ? '学校设置：上课期间发布的留言会等到下一个课间再显示。' : '';
+  $('pvClass').textContent = klass.className;
   renderWindowPill();
   renderGrid(); renderPicked(); renderNow(); renderLive(d);
   connectLive();
@@ -348,69 +394,143 @@ async function openClass(id) {
   return true;
 }
 
+function callerName() {
+  if (!me) return '老师';
+  return me.displayName.length <= 2 ? me.displayName + '老师' : me.displayName;
+}
 function callerLabel() {
   if (!me) return '老师';
-  const name = me.displayName.length <= 2 ? me.displayName + '老师' : me.displayName;
+  const name = callerName();
   return me.title ? me.title + ' · ' + name : name;
 }
 
 /* ---------- 标签页 ---------- */
 function switchTab(tab) {
   currentTab = tab;
-  for (const b of $('tabs').querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  markTabs($('tabs'), tab, 'tab');
   for (const t of ['call', 'announce', 'schedule', 'activity']) $('tab-' + t).hidden = t !== tab;
   $('tray').hidden = tab !== 'call';
+  if (tab !== 'call') closeSheet();
   if (tab === 'announce') { renderPreview(); loadAnnouncements(); }
-  if (tab === 'schedule') { renderSchPicked(); loadSchedules(); }
+  if (tab === 'schedule') { renderSchPicker(); loadSchedules(); }
   if (tab === 'activity') { loadActivity(); }
+  syncTrayHeight();
 }
-$('tabs').onclick = (e) => { const b = e.target.closest('button[data-tab]'); if (b) switchTab(b.dataset.tab); };
+wireTabs($('tabs'), switchTab);
 
 /* ---------- 名字网格 ---------- */
+function toggleName(set, name, rerender) {
+  if (set.has(name)) set.delete(name);
+  else if (set.size < maxNamesPerCall) set.add(name);
+  else { toast('一次最多选择 ' + maxNamesPerCall + ' 人', true); return; }
+  rerender();
+}
+
+/** 重建名单格子时保留键盘焦点：否则每选一个人，焦点就掉回页面顶部 */
+function keepFocus(grid, build) {
+  const active = document.activeElement;
+  const name = active && grid.contains(active) ? active.dataset.name : null;
+  build();
+  if (name) {
+    const again = [...grid.children].find((b) => b.dataset.name === name);
+    if (again) again.focus();
+  }
+}
+
+function nameButton(name, set, onToggle) {
+  const selected = set.has(name);
+  const b = el('button', 's');
+  b.type = 'button';
+  b.dataset.name = name;
+  b.append(name);
+  const tick = el('span', 'tick'); tick.append(icon('check')); b.append(tick);
+  b.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  b.disabled = !selected && set.size >= maxNamesPerCall;
+  b.onclick = () => toggleName(set, name, onToggle);
+  return b;
+}
+
+function filtered(q) { return students.filter((name) => !q || name.includes(q)); }
+
 function renderGrid() {
   const q = $('search').value.trim();
   const grid = $('grid');
-  grid.innerHTML = '';
-  const list = students.filter((name) => !q || name.includes(q));
-  for (const name of list) {
-    const selected = sel.has(name);
-    const b = el('button', 's', name);
-    b.type = 'button';
-    b.setAttribute('aria-pressed', selected ? 'true' : 'false');
-    b.disabled = !selected && sel.size >= maxNamesPerCall;
-    b.onclick = () => {
-      if (sel.has(name)) sel.delete(name);
-      else if (sel.size < maxNamesPerCall) sel.add(name);
-      else return toast('一次最多选择 ' + maxNamesPerCall + ' 人', true);
-      renderGrid(); renderPicked();
-    };
-    grid.append(b);
+  const list = filtered(q);
+  keepFocus(grid, () => {
+    grid.innerHTML = '';
+    for (const name of list) grid.append(nameButton(name, sel, () => { renderGrid(); renderPicked(); }));
+  });
+  const empty = $('gridEmpty');
+  empty.hidden = list.length > 0;
+  if (!list.length) {
+    fill(empty, students.length
+      ? emptyState('没有找到「' + q + '」', '换个关键词，或清空搜索框查看全班。', { label: '清空搜索', fn: () => { $('search').value = ''; renderGrid(); $('search').focus(); } }, true)
+      : emptyState('本班名单还是空的', '请联系管理员在管理端录入学生名单。', null, true));
   }
   const t = '已选择 ' + sel.size + ' / ' + maxNamesPerCall;
   $('hint').textContent = q ? '匹配 ' + list.length + ' 人 · ' + t : t;
 }
 
-function chips(box, placeholder) {
+function chips(box, set, placeholder, after) {
   box.innerHTML = '';
-  if (!sel.size) { box.append(el('span', 'ph', placeholder)); return; }
-  for (const name of sel) {
+  if (!set.size) { box.append(el('span', 'ph', placeholder)); return; }
+  for (const name of set) {
     const chip = el('span', 'chip', name);
-    const rm = el('button', '', '×');
-    rm.type = 'button'; rm.setAttribute('aria-label', '取消 ' + name);
-    rm.onclick = () => { sel.delete(name); renderGrid(); renderPicked(); renderSchPicked(); };
+    const rm = el('button');
+    rm.type = 'button'; rm.setAttribute('aria-label', '取消选择 ' + name);
+    rm.append(icon('x'));
+    rm.onclick = () => { set.delete(name); after(); };
     chip.append(rm); box.append(chip);
   }
 }
 
 function renderPicked() {
-  chips($('picked'), '请从名单中选择同学');
+  chips($('picked'), sel, '还没有选择学生', () => { renderGrid(); renderPicked(); });
   const open = callWindow ? callWindow.open : true;
-  $('send').disabled = sel.size === 0 || sending || !open;
-  $('reset').disabled = sel.size === 0;
-  const target = klass ? klass.className + '大屏' : '大屏';
-  $('send').textContent = !open ? '上课中，暂不能点人' : (sel.size ? '通知 ' + sel.size + ' 人到' + target : '通知到' + target);
+  const n = sel.size;
+  $('send').disabled = n === 0 || sending || !open;
+  $('reset').disabled = n === 0;
+  $('pickedCount').textContent = String(n);
+  $('pickedNames').textContent = n ? [...sel].join('、') : '点名单选择学生';
+  $('pickedBtn').toggleAttribute('data-empty', n === 0);
+  $('tray').toggleAttribute('data-empty', n === 0);
+  $('sheetTitle').textContent = '已选 ' + n + ' 人';
+  const txt = $('sendText');
+  txt.innerHTML = '';
+  if (!open) txt.textContent = '上课中，暂不能点人';
+  else if (!n) txt.textContent = '通知到大屏';
+  else { txt.append('通知 ' + n + ' 人'); txt.append(el('span', 'send-target', '到' + (klass ? klass.className : '') + '大屏')); }
+  if (!n) closeSheet();
+  renderSignal();
+  syncTrayHeight();
 }
-function renderSchPicked() { chips($('schPicked'), '请先在「点人」页选择学生，再回到这里'); }
+
+/* ---------- 已选名单面板（bottom sheet） ---------- */
+function openSheet() {
+  if (!sel.size) return;
+  $('sheet').hidden = false;
+  $('pickedBtn').setAttribute('aria-expanded', 'true');
+  syncTrayHeight();
+}
+function closeSheet() {
+  $('sheet').hidden = true;
+  $('pickedBtn').setAttribute('aria-expanded', 'false');
+}
+$('pickedBtn').onclick = () => ($('sheet').hidden ? openSheet() : closeSheet());
+$('sheetClose').onclick = () => { closeSheet(); $('pickedBtn').focus(); };
+$('sheetClear').onclick = () => clearSelection();
+function syncTrayHeight() {
+  document.documentElement.style.setProperty('--tray-h', ($('tray').hidden ? 0 : $('tray').offsetHeight) + 'px');
+}
+window.addEventListener('resize', syncTrayHeight);
+
+function clearSelection() {
+  if (!sel.size) return;
+  const before = [...sel];
+  sel.clear(); renderGrid(); renderPicked();
+  toast('已清空 ' + before.length + ' 人', { action: { label: '撤销', fn: () => { before.forEach((n) => sel.add(n)); renderGrid(); renderPicked(); } } });
+}
+$('reset').onclick = clearSelection;
 
 /* ---------- 大屏状态 ---------- */
 function ownEvent(ev) {
@@ -420,39 +540,35 @@ function ownEvent(ev) {
 
 function renderNow() {
   const ev = ownEvent(display.current);
-  const namesBox = $('nowNames');
-  const summary = $('ackSummary');
-  const body = $('nowBody');
+  const scr = $('nowScreen');
+  scr.innerHTML = '';
+  scr.className = 'screen';
   clearInterval(cdTimer);
-  summary.textContent = ''; summary.classList.remove('all');
-  body.textContent = '';
   if (!ev) {
-    $('nowTitle').textContent = (klass ? klass.className : '') + '大屏正在显示';
-    namesBox.className = 'now-names idle';
-    namesBox.textContent = '当前为空';
+    scr.append(el('div', 'scr-idle', hhmm(Date.now())), el('small', '', '待机'));
     $('countdown').classList.remove('on');
   } else if (ev.type === 'call') {
-    $('nowTitle').textContent = (ev.caller || '老师') + '正在找';
-    namesBox.className = 'now-names';
-    namesBox.innerHTML = '';
+    scr.append(el('div', 'scr-label', (ev.caller || '老师') + '正在找'));
+    const names = el('div', 'scr-names');
     const acked = new Map((ev.acks || []).map((a) => [a.name, a.at]));
     for (const name of ev.names) {
-      const chip = el('span', 'ack');
-      chip.dataset.acked = acked.has(name) ? '1' : '0';
-      chip.append(el('i'), name, el('small', '', acked.has(name) ? '已收到 ' + hhmm(acked.get(name)) : '未收到'));
-      namesBox.append(chip);
+      const s = el('span', acked.has(name) ? 'acked' : '', name);
+      if (acked.has(name)) s.append(icon('check'));
+      s.title = acked.has(name) ? '已收到 ' + hhmm(acked.get(name)) : '未收到';
+      names.append(s);
     }
-    const n = ev.names.filter((x) => acked.has(x)).length;
-    summary.textContent = n === ev.names.length ? '全部 ' + n + ' 人已确认收到' : '已收到 ' + n + ' / ' + ev.names.length + ' 人';
-    body.textContent = ev.message || '';
+    scr.append(names);
+    if (ev.message) scr.append(el('div', 'scr-msg', ev.message));
   } else {
-    $('nowTitle').textContent = (ev.priority === 1 ? '紧急通知' : '班级留言') + ' · ' + (ev.author || '');
-    namesBox.className = 'now-names';
-    namesBox.textContent = ev.title || '';
-    body.textContent = ev.body || '';
+    if (ev.priority === 1) scr.classList.add('urgent');
+    scr.append(el('div', 'scr-label', ev.priority === 1 ? '紧急通知' : '班级留言'));
+    scr.append(el('div', 'scr-title', ev.title || ''));
+    if (ev.body) scr.append(el('div', 'scr-body', ev.body));
   }
+  $('clear').disabled = !ev && !(display.queue || []).length;
   if (ev) paintCountdown(ev);
   renderQueue();
+  renderSignal();
 }
 
 function paintCountdown(ev) {
@@ -480,25 +596,120 @@ function renderQueue() {
   if (!q.length) { box.append(el('span', 'ph', '没有等待中的内容')); return; }
   q.forEach((item, i) => {
     const row = el('div', 'item');
-    const copy = el('div');
+    row.dataset.tone = item.priority === 1 ? 'bad' : 'warn';
+    const lead = el('span', 'lead num', String(i + 1));
+    const copy = el('div', 'body');
     const label = item.type === 'call' ? (item.names || []).join('、') : (item.title || '留言');
-    copy.append(el('strong', '', (i + 1) + '. ' + label));
+    copy.append(el('strong', '', label));
     copy.append(el('small', '', (item.type === 'call' ? '点人' : '留言') + (item.author ? ' · ' + item.author : '') + ' · ' + ({ 1: '紧急', 2: '定时提醒', 3: '手动', 4: '普通' }[item.priority] || '')));
     const acts = el('div', 'acts');
-    const wd = el('button', 'link danger', '撤回');
-    wd.onclick = () => withdraw(item.noticeId);
+    const wd = el('button', 'btn btn-ghost danger btn-sm', '撤回');
+    wd.type = 'button';
+    wd.onclick = () => withdraw(item.noticeId, true);
     acts.append(wd);
-    row.append(copy, acts);
+    row.append(lead, copy, acts);
     box.append(row);
   });
 }
 
 function renderLive(d) {
   const pill = $('livePill');
-  const displays = d.displays || 0;
-  pill.className = 'pill ' + (displays ? 'on' : 'off');
-  $('liveText').textContent = displays ? '大屏在线 ' + displays : '大屏未连接';
+  displaysOnline = d.displays || 0;
+  pill.className = 'status ' + (displaysOnline ? 'ok' : 'bad');
+  pill.querySelector('svg').replaceWith(icon(displaysOnline ? 'monitor' : 'monitorOff'));
+  $('liveText').textContent = displaysOnline ? '大屏在线' + (displaysOnline > 1 ? ' ' + displaysOnline : '') : '大屏未连接';
+  renderSignal();
 }
+
+/* ---------- 消息信号轨道：我最近一次发送走到了哪一步 ---------- */
+function signalState() {
+  const cur = ownEvent(display.current);
+  const s = lastSent;
+  const onScreen = Boolean(cur && cur.type === 'call' && cur.noticeId === s.noticeId);
+  const qi = (display.queue || []).findIndex((q) => q.noticeId === s.noticeId);
+  if (onScreen) {
+    s.seen = true;
+    s.acks = new Map((cur.acks || []).map((a) => [a.name, a.at]));
+  }
+  if (qi >= 0) s.queued = true;
+  const acked = s.names.filter((n) => s.acks.has(n)).length;
+  const total = s.names.length;
+  if (s.withdrawn) return { stage: s.seen ? 3 : 2, tone: 'alert', ended: true, text: '已撤回', short: '已撤回' };
+  if (acked === total) return { stage: 4, tone: 'ok', text: '全部 ' + total + ' 人已收到', short: '全部已收到' };
+  if (onScreen) return { stage: 3, tone: 'gold', text: '正在显示 · 已收到 ' + acked + ' / ' + total, short: '正在显示 ' + acked + '/' + total, live: true };
+  if (qi >= 0) return { stage: 2, tone: 'gold', text: qi ? '排队中，前面还有 ' + qi + ' 条' : '排队中，下一条就是它', short: '等待显示', queued: true };
+  if (s.seen) return { stage: 3, tone: 'gold', ended: true, text: '已下屏 · 已收到 ' + acked + ' / ' + total, short: '已下屏 ' + acked + '/' + total };
+  // 排过队、还没显示就不见了：别人清空了队列或撤回了它。不能一直停在「等待大屏同步」
+  if (s.queued) return { stage: 2, tone: 'alert', ended: true, text: '已从等待队列移除，没有显示', short: '已移除' };
+  return { stage: 1, tone: 'gold', text: '已发送，等待大屏同步', short: '已发送' };
+}
+
+function renderSignal() {
+  const box = $('signalBox');
+  const tray = $('traySignal');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!lastSent) {
+    tray.hidden = true;
+    const head = el('div', 'signal-head');
+    head.append(el('strong', '', sel.size ? '已选 ' + sel.size + ' 人，还没有发送' : '还没有发送通知'));
+    box.append(head, signalTrack(sel.size ? 0 : -1, 'gold'));
+    const foot = el('div', 'signal-foot');
+    foot.append(el('p', 'muted', '发送后，这里实时显示通知走到了哪一步，以及每位同学有没有点「收到」。'));
+    foot.firstChild.style.margin = '0';
+    box.append(foot);
+    syncTrayHeight();
+    return;
+  }
+  const st = signalState();
+  const s = lastSent;
+  const head = el('div', 'signal-head');
+  head.append(el('strong', '', st.text), el('span', 'num', hhmm(s.sentAt) + ' 发送'));
+  box.append(head, signalTrack(st.stage, st.tone, st.ended));
+
+  const foot = el('div', 'signal-foot');
+  const names = el('div', 'chips');
+  for (const n of s.names) {
+    const has = s.acks.has(n);
+    const chip = el('span', 'status ' + (has ? 'ok' : ''));
+    chip.append(icon(has ? 'check' : 'clock'), n + ' · ' + (has ? '已收到 ' + hhmm(s.acks.get(n)) : '未收到'));
+    names.append(chip);
+  }
+  foot.append(names);
+  if (s.message) foot.append(el('p', 'muted', '附加说明：' + s.message));
+  if (!displaysOnline && !st.ended && st.stage < 4) {
+    const warn = el('div', 'note bad');
+    warn.append(icon('monitorOff'), el('span', '', '大屏未连接：学生暂时看不到这条通知。请检查教室大屏是否开机联网。'));
+    foot.append(warn);
+  }
+  const acts = el('div', 'row');
+  if (st.live || st.queued) {
+    const wd = el('button', 'btn btn-secondary btn-sm', '撤回这条通知');
+    wd.type = 'button';
+    wd.onclick = () => withdraw(s.noticeId, true);
+    acts.append(wd);
+  }
+  if (st.ended && st.stage < 4 && !s.withdrawn) {
+    const re = el('button', 'btn btn-secondary btn-sm', '再次发送');
+    re.type = 'button';
+    re.onclick = () => resend(s.noticeId, true);
+    acts.append(re);
+  }
+  if (acts.children.length) foot.append(acts);
+  for (const p of foot.querySelectorAll('p')) p.style.margin = '0';
+  box.append(foot);
+
+  // 手机上托盘里的精简信号条
+  tray.hidden = false;
+  tray.dataset.tone = st.tone;
+  tray.innerHTML = '';
+  const dots = el('span', 'dots');
+  for (let i = 0; i < 5; i += 1) dots.append(el('i', i <= st.stage ? 'on' : ''));
+  tray.append(dots, el('span', '', st.short), el('span', '', s.names.length > 3 ? s.names.slice(0, 3).join('、') + '…' : s.names.join('、')));
+  tray.setAttribute('aria-label', '通知进度：' + st.text + '，点一下查看详情');
+  syncTrayHeight();
+}
+$('traySignal').onclick = () => { closeSheet(); $('signalPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 
 /* ---------- 实时 ---------- */
 function disconnectLive() { if (liveStream) { liveStream.close(); liveStream = null; } }
@@ -532,102 +743,161 @@ setInterval(pollStatus, 5000);
 /* ---------- 点人 ---------- */
 function setSending(v) {
   sending = v;
-  const b = $('send');
-  if (v) b.dataset.loading = '1'; else delete b.dataset.loading;
+  setBusy($('send'), v);
   renderPicked();
 }
 
 $('send').onclick = async () => {
   const names = [...sel];
   if (!names.length || sending) return;
+  const message = $('msg').value.trim();
+  $('sendErr').hidden = true;
   setSending(true);
   try {
-    const res = await api('POST', cpath('calls'), { names, message: $('msg').value.trim() });
+    const res = await api('POST', cpath('calls'), { names, message });
     if (!res.ok) {
       if (res.json && res.json.error === 'CALL_WINDOW_CLOSED') { callWindow = res.json.callWindow || callWindow; renderWindowPill(); }
-      return toast(errText(res, '发送失败'), true);
+      // 发送失败不自动消失：留在托盘里，直到下一次操作
+      $('sendErr').textContent = errText(res, '发送失败') + '。已选名单保留，可以直接重试。';
+      $('sendErr').hidden = false;
+      syncTrayHeight();
+      return;
     }
+    lastSent = { noticeId: res.json.notice.id, names, message, sentAt: Date.now(), acks: new Map(), seen: false, queued: false, withdrawn: false };
     display = res.json.display;
-    renderNow(); renderLive(res.json);
-    toast(res.json.displayedNow ? '已通知到' + klass.className + '大屏' + (res.json.displays ? '' : '（大屏未连接）') : '已加入等待队列，将在当前内容结束后显示', !res.json.displays);
     sel.clear(); $('msg').value = ''; $('search').value = '';
-    renderGrid(); renderPicked();
+    renderGrid();
+    renderNow(); renderLive(res.json);
+    const b = $('send');
+    b.dataset.state = 'success';
+    setTimeout(() => { delete b.dataset.state; }, 1400);
+    toast(res.json.displayedNow ? '已通知到' + klass.className + '大屏' : '已加入等待队列，当前内容结束后显示', !res.json.displays);
   } finally { setSending(false); }
 };
 
-$('clear').onclick = () => clearDisplay(false);
-$('clearAll').onclick = () => clearDisplay(true);
+$('clear').onclick = async () => {
+  const cur = ownEvent(display.current);
+  const q = (display.queue || []).length;
+  const what = !cur ? '' : (cur.type === 'call' ? '「' + cur.names.join('、') + '」' : '「' + (cur.title || '留言') + '」');
+  const choice = await choiceDialog({
+    title: '清空' + (klass ? klass.className : '') + '大屏',
+    icon: 'monitor',
+    text: cur ? '大屏正在显示' + what + '。' : '大屏当前空闲。',
+    choices: [
+      { value: 'current', label: '只清除当前内容', desc: q ? '等待中的 ' + q + ' 条会接着显示' : '大屏回到待机', disabled: !cur },
+      { value: 'all', label: '清除当前内容和等待队列', desc: q ? '当前内容和等待中的 ' + q + ' 条都会移除，不能恢复' : '没有等待中的内容', danger: true, disabled: !q },
+    ],
+  });
+  if (choice) clearDisplay(choice === 'all');
+};
 async function clearDisplay(all) {
   const res = await api('POST', cpath('display/clear'), { all });
   if (!res.ok) return toast(errText(res, '清空失败'), true);
   display = res.json.display; renderNow();
   toast(all ? '大屏与等待队列已清空' : '当前内容已清除');
 }
-async function withdraw(noticeId) {
+async function withdraw(noticeId, offerUndo) {
   const res = await api('POST', cpath('notices/' + noticeId + '/withdraw'), {});
   if (!res.ok) return toast(errText(res, '撤回失败'), true);
+  if (lastSent && lastSent.noticeId === noticeId) lastSent.withdrawn = true;
   display = res.json.display; renderNow();
-  toast('已撤回');
+  toast('已撤回', offerUndo ? { action: { label: '撤销', fn: () => resend(noticeId, false) } } : undefined);
+  return true;
 }
-async function resend(noticeId) {
+async function resend(noticeId, quiet) {
   const res = await api('POST', cpath('notices/' + noticeId + '/resend'), {});
   if (!res.ok) return toast(errText(res, '再次发送失败'), true);
+  if (lastSent && lastSent.noticeId === noticeId) { lastSent.withdrawn = false; lastSent.seen = false; lastSent.queued = false; lastSent.acks = new Map(); lastSent.sentAt = Date.now(); }
   display = res.json.display; renderNow();
-  toast(res.json.alreadyQueued ? '这条内容已在大屏或队列中' : '已再次发送');
+  if (quiet !== false || res.json.alreadyQueued) toast(res.json.alreadyQueued ? '这条内容已在大屏或队列中' : '已再次发送');
 }
 
-$('reset').onclick = () => { sel.clear(); renderGrid(); renderPicked(); };
 $('search').oninput = renderGrid;
+$('search').onkeydown = (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const first = filtered($('search').value.trim())[0];
+  if (!first || !$('search').value.trim()) return;
+  toggleName(sel, first, () => { $('search').value = ''; renderGrid(); renderPicked(); });
+};
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && currentTab === 'call') { $('search').value = ''; renderGrid(); }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && currentTab === 'call' && !$('app').hidden) $('send').click();
+  if (e.key === 'Escape' && currentTab === 'call' && !document.querySelector('dialog[open]')) {
+    if (!$('sheet').hidden) { closeSheet(); $('pickedBtn').focus(); } else if ($('search').value) { $('search').value = ''; renderGrid(); }
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && currentTab === 'call' && !$('app').hidden && !$('klassView').hidden) $('send').click();
 });
 
 /* ---------- 留言 ---------- */
 function renderPreview() {
+  const urgent = me && me.role === 'admin' && $('annUrgent').checked;
+  $('annPreview').classList.toggle('urgent', urgent);
+  $('pvKind').textContent = urgent ? '紧急通知' : '班级留言';
   $('pvTitle').textContent = $('annTitle').value.trim() || '班级通知';
-  $('pvBody').textContent = $('annBody').value.trim() || '正文内容';
+  $('pvBody').textContent = $('annBody').value.trim() || '正文内容会显示在这里';
   $('pvAuthor').textContent = '—— ' + callerLabel();
+  $('pvClock').textContent = hhmm(Date.now());
 }
 $('annTitle').oninput = renderPreview;
 $('annBody').oninput = renderPreview;
+$('annUrgent').onchange = renderPreview;
 $('annWhen').onchange = () => { $('annAtField').hidden = $('annWhen').value !== 'later'; };
 $('announceForm').onsubmit = async (e) => {
   e.preventDefault();
+  const urgent = me.role === 'admin' && $('annUrgent').checked;
   const body = {
     title: $('annTitle').value.trim(), body: $('annBody').value.trim(),
     durationSeconds: Number($('annDuration').value),
-    urgent: me.role === 'admin' && $('annUrgent').checked,
+    urgent,
   };
+  if (!body.title || !body.body) return toast('请填写标题和正文', true);
   if ($('annWhen').value === 'later') {
     const at = $('annAt').value;
-    if (!at) return toast('请选择显示时间', true);
+    if (!at) { $('annAt').focus(); return toast('请选择显示时间', true); }
     body.publishAt = new Date(at).getTime();
   }
-  const b = $('annSend'); b.disabled = true; b.dataset.loading = '1';
+  if (urgent) {
+    const cur = ownEvent(display.current);
+    const ok = await confirmDialog({
+      title: '发布紧急广播', danger: true, confirm: '立即抢占大屏',
+      text: '紧急广播会立刻占用' + klass.className + '大屏。',
+      impact: [
+        cur ? '正在显示的「' + (cur.type === 'call' ? cur.names.join('、') : cur.title) + '」会被挤到等待队列，广播结束后回来' : '大屏当前空闲',
+        '大屏顶部显示红色信号条和「紧急通知」',
+        '操作会写入审计记录',
+      ],
+    });
+    if (!ok) return;
+  }
+  setBusy($('annSend'), true);
   const res = await api('POST', cpath('announcements'), body);
-  b.disabled = false; delete b.dataset.loading;
+  setBusy($('annSend'), false);
   if (!res.ok) return toast(errText(res, '发布失败'), true);
   display = res.json.display; renderNow();
   const n = res.json.notice;
   toast(n.status === 'scheduled' ? '已安排在 ' + dateTime(n.publishAt) + ' 显示' : (res.json.displayedNow ? '留言已显示到大屏' : '留言已加入等待队列'));
-  $('annTitle').value = ''; $('annBody').value = ''; renderPreview();
+  $('annTitle').value = ''; $('annBody').value = ''; $('annUrgent').checked = false; renderPreview();
   loadAnnouncements();
 };
 
 async function loadAnnouncements() {
-  const res = await api('GET', cpath('notices?type=announcement'));
-  if (!res.ok || res.json.classId !== classId) return;
   const box = $('annList');
+  if (!box.children.length) fill(box, skeleton(3));
+  const res = await api('GET', cpath('notices?type=announcement'));
+  if (!res.ok) return fill(box, errorState(errText(res, '留言加载失败'), loadAnnouncements));
+  if (res.json.classId !== classId) return;
   box.innerHTML = '';
-  if (!res.json.notices.length) box.append(el('span', 'ph', '暂无'));
+  if (!res.json.notices.length) box.append(emptyState('还没有留言', '发布后会列在这里，可以随时撤回或再次发送。'));
   for (const n of res.json.notices.slice(0, 20)) box.append(noticeRow(n));
 }
 
 function noticeRow(n) {
   const row = el('div', 'item');
-  const copy = el('div');
-  const tag = el('span', 'tag ' + (n.priority === 1 ? 'urgent' : n.type), n.priority === 1 ? '紧急' : (n.type === 'call' ? (n.source === 'schedule' ? '定时' : '点人') : '留言'));
+  const urgent = n.priority === 1;
+  row.dataset.tone = urgent ? 'bad' : (n.type === 'call' ? 'info' : 'warn');
+  const lead = el('span', 'lead');
+  lead.append(icon(urgent ? 'alert' : (n.type === 'call' ? (n.source === 'schedule' ? 'clock' : 'users') : 'megaphone')));
+  const copy = el('div', 'body');
+  const tag = el('span', 'tag ' + (urgent ? 'urgent' : n.type), urgent ? '紧急' : (n.type === 'call' ? (n.source === 'schedule' ? '定时' : '点人') : '留言'));
   const title = el('strong');
   title.append(tag, n.type === 'call' ? n.names.join('、') : n.title);
   copy.append(title);
@@ -640,97 +910,157 @@ function noticeRow(n) {
   copy.append(el('small', '', meta.join(' · ')));
   const acts = el('div', 'acts');
   if (n.status !== 'withdrawn' || n.type === 'call') {
-    const re = el('button', 'link', '再次发送'); re.onclick = () => resend(n.id); acts.append(re);
+    const re = el('button', 'btn btn-ghost btn-sm', '再次发送'); re.type = 'button'; re.onclick = () => resend(n.id); acts.append(re);
   }
   if (n.status !== 'withdrawn') {
-    const wd = el('button', 'link danger', '撤回'); wd.onclick = () => withdraw(n.id).then(() => { loadAnnouncements(); if (currentTab === 'activity') loadActivity(); }); acts.append(wd);
+    const wd = el('button', 'btn btn-ghost danger btn-sm', '撤回'); wd.type = 'button';
+    wd.onclick = () => withdraw(n.id, false).then((ok) => { if (!ok) return; loadAnnouncements(); if (currentTab === 'activity') loadActivity(); });
+    acts.append(wd);
   }
-  row.append(copy, acts);
+  row.append(lead, copy, acts);
   return row;
 }
 
 /* ---------- 定时提醒 ---------- */
+function renderSchPicker() {
+  const refresh = () => renderSchPicker();
+  chips($('schPicked'), schSel, '还没有选择学生：在下面搜索或点选', refresh);
+  $('schCount').textContent = '已选 ' + schSel.size + ' 人';
+  const q = $('schSearch').value.trim();
+  const grid = $('schGrid');
+  const list = filtered(q);
+  keepFocus(grid, () => {
+    grid.innerHTML = '';
+    for (const name of list) grid.append(nameButton(name, schSel, refresh));
+    if (!list.length) grid.append(el('span', 'ph', students.length ? '没有找到「' + q + '」' : '本班名单为空'));
+  });
+  const use = $('schUseCall');
+  const same = sel.size === schSel.size && [...sel].every((n) => schSel.has(n));
+  use.hidden = !sel.size || same;
+  use.textContent = '改用「点人」页已选的 ' + sel.size + ' 人';
+}
+$('schSearch').oninput = renderSchPicker;
+$('schSearch').onkeydown = (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const first = filtered($('schSearch').value.trim())[0];
+  if (!first || !$('schSearch').value.trim()) return;
+  toggleName(schSel, first, () => { $('schSearch').value = ''; renderSchPicker(); });
+};
+$('schUseCall').onclick = () => { schSel.clear(); sel.forEach((n) => schSel.add(n)); renderSchPicker(); };
+
 async function loadSchedules() {
+  const box = $('schList');
+  if (!box.children.length) fill(box, skeleton(3));
   const res = await api('GET', cpath('schedules'));
-  if (!res.ok || res.json.classId !== classId) return;
+  if (!res.ok) return fill(box, errorState(errText(res, '定时提醒加载失败'), loadSchedules));
+  if (res.json.classId !== classId) return;
   schedules = res.json.schedules;
   const w = res.json.callWindows;
-  $('schWindows').textContent = w.windows.map((x) => x.start + '–' + x.end).join('、') + '（' + w.weekdays.map((d) => WEEKDAYS[d]).join('、') + '）';
-  $('schWindowHint').textContent = '必须在允许点人的时段内';
-  const box = $('schList');
+  const wbox = $('schWindows');
+  wbox.innerHTML = '';
+  const days = el('p', 'muted', w.weekdays.map((d) => WEEKDAYS[d]).join('、'));
+  days.style.margin = '0 0 8px';
+  const times = el('div', 'chips');
+  for (const x of w.windows) times.append(el('span', 'status num', x.start + '–' + x.end));
+  wbox.append(days, times);
   box.innerHTML = '';
   const paused = schedules.filter((s) => s.status === 'paused').length;
   $('scheduleBadge').textContent = paused ? String(paused) : '';
-  if (!schedules.length) box.append(el('span', 'ph', '还没有定时提醒'));
+  if (!schedules.length) box.append(emptyState('还没有定时提醒', '比如每天第二节课后提醒课代表去办公室，只需设置一次。'));
   for (const s of schedules) {
     const row = el('div', 'item');
-    row.dataset.status = s.status === 'paused' ? 'paused' : (s.enabled ? 'active' : '');
-    const copy = el('div');
-    copy.append(el('strong', '', `${s.time}　${s.names.join('、')}`));
-    const meta = [s.weekdayNames.join('、'), s.message || '（无说明）', '创建：' + s.createdByName];
+    const isPaused = s.status === 'paused';
+    row.dataset.tone = !s.enabled ? '' : (isPaused ? 'bad' : 'ok');
+    const lead = el('span', 'lead'); lead.append(icon(!s.enabled ? 'pause' : (isPaused ? 'alert' : 'clock')));
+    const copy = el('div', 'body');
+    const t = el('strong');
+    t.append(el('span', 'num', s.time + '　'), s.names.join('、'));
+    copy.append(t);
+    const meta = [s.weekdayNames.join('、'), s.message || '无附加说明', '创建：' + s.createdByName];
     if (s.startDate || s.endDate) meta.push((s.startDate || '') + ' 至 ' + (s.endDate || '不限'));
     if (!s.enabled) meta.push('已停用');
-    else if (s.status === 'paused') meta.push('已暂停：' + (PAUSE_REASONS[s.pauseReason] || s.pauseReason));
+    else if (isPaused) meta.push('已暂停：' + (PAUSE_REASONS[s.pauseReason] || s.pauseReason));
     else if (s.nextRunAt) meta.push('下次 ' + dateTime(s.nextRunAt));
     if (s.lastResult) meta.push('最近：' + ({ sent: '已发送', missed: '已错过', skipped: '已跳过', failed: '失败' }[s.lastResult.status] || s.lastResult.status) + (s.lastRunDate ? ' ' + s.lastRunDate : ''));
     copy.append(el('small', '', meta.join(' · ')));
     const acts = el('div', 'acts');
     if (s.mine || me.role === 'admin') {
-      const toggle = el('button', 'link', s.enabled ? (s.status === 'paused' ? '恢复' : '暂停') : '启用');
+      const active = s.enabled && !isPaused;
+      const toggle = el('button', 'btn btn-ghost btn-sm', s.enabled ? (isPaused ? '恢复' : '暂停') : '启用');
+      toggle.type = 'button';
       toggle.onclick = async () => {
-        const r = await api('PATCH', cpath('schedules/' + s.id), { enabled: !(s.enabled && s.status !== 'paused') });
+        const r = await api('PATCH', cpath('schedules/' + s.id), { enabled: !active });
         if (!r.ok) return toast(errText(r, '操作失败'), true);
         loadSchedules();
+        if (active) {
+          toast('已暂停 ' + s.time + ' 的提醒', { action: { label: '撤销', fn: async () => { const u = await api('PATCH', cpath('schedules/' + s.id), { enabled: true }); if (!u.ok) toast(errText(u, '恢复失败'), true); loadSchedules(); } } });
+        } else toast('已恢复');
       };
-      const edit = el('button', 'link', '改时间');
+      const edit = el('button', 'btn btn-ghost btn-sm', '改时间');
+      edit.type = 'button';
       edit.onclick = async () => {
-        const t = window.prompt('新的提醒时间（HH:MM，必须在允许点人的时段内）', s.time);
-        if (!t) return;
-        const r = await api('PATCH', cpath('schedules/' + s.id), { time: t.trim() });
+        const v = await promptDialog({
+          title: '修改提醒时间', icon: 'clock', label: '新的提醒时间', type: 'time', value: s.time, required: true,
+          hint: '必须在允许点人的时段内：' + w.windows.map((x) => x.start + '–' + x.end).join('、'),
+        });
+        if (!v || v === s.time) return;
+        const r = await api('PATCH', cpath('schedules/' + s.id), { time: v.trim() });
         if (!r.ok) return toast(errText(r, '修改失败'), true);
+        toast('已改为每天 ' + v);
         loadSchedules();
       };
-      const del = el('button', 'link danger', '删除');
+      const del = el('button', 'btn btn-ghost danger btn-sm', '删除');
+      del.type = 'button';
       del.onclick = async () => {
-        if (!window.confirm('删除这条定时提醒？')) return;
+        const ok = await confirmDialog({
+          title: '删除这条定时提醒？', danger: true, confirm: '删除提醒',
+          impact: ['每天 ' + s.time + ' 不再自动点 ' + s.names.join('、'), '已经发出的记录会保留', '删除后不能恢复；只想临时停一下，可以用「暂停」'],
+        });
+        if (!ok) return;
         const r = await api('DELETE', cpath('schedules/' + s.id));
         if (!r.ok) return toast(errText(r, '删除失败'), true);
+        toast('已删除');
         loadSchedules();
       };
       acts.append(toggle, edit, del);
     }
-    row.append(copy, acts);
+    row.append(lead, copy, acts);
     box.append(row);
   }
 }
 
 $('scheduleForm').onsubmit = async (e) => {
   e.preventDefault();
-  const names = [...sel];
-  if (!names.length) return toast('请先在「点人」页选择学生', true);
+  const names = [...schSel];
+  if (!names.length) { $('schSearch').focus(); return toast('请先选择要提醒的学生', true); }
   const weekdays = [...$('schWeekdays').querySelectorAll('input:checked')].map((i) => Number(i.value));
+  if (!weekdays.length) return toast('请至少选择一个执行星期', true);
   const body = {
     names, time: $('schTime').value, message: $('schMessage').value.trim(), weekdays,
     startDate: $('schStart').value || null, endDate: $('schEnd').value || null,
   };
-  const b = $('schCreate'); b.disabled = true; b.dataset.loading = '1';
+  setBusy($('schCreate'), true);
   const res = await api('POST', cpath('schedules'), body);
-  b.disabled = false; delete b.dataset.loading;
+  setBusy($('schCreate'), false);
   if (!res.ok) return toast(errText(res, '创建失败'), true);
-  toast('已创建定时提醒');
+  toast('已创建：每天 ' + body.time + ' 提醒 ' + names.join('、'));
   $('schMessage').value = '';
+  schSel.clear(); renderSchPicker();
   loadSchedules();
 };
 
 /* ---------- 记录 ---------- */
 async function loadActivity() {
+  const box = $('activity');
+  fill(box, skeleton(5));
   const q = new URLSearchParams();
   if ($('actType').value) q.set('type', $('actType').value);
   if ($('actAuthor').value) q.set('author', $('actAuthor').value);
   if ($('actDate').value) q.set('date', $('actDate').value);
   const res = await api('GET', cpath('activity' + (q.toString() ? '?' + q : '')));
-  if (!res.ok || res.json.classId !== classId) return;
-  const box = $('activity');
+  if (!res.ok) return fill(box, errorState(errText(res, '记录加载失败'), loadActivity));
+  if (res.json.classId !== classId) return;
   box.innerHTML = '';
   const authors = new Map();
   for (const x of res.json.activity) if (x.authorId) authors.set(x.authorId, x.authorName);
@@ -740,14 +1070,22 @@ async function loadActivity() {
     sel2.innerHTML = '<option value="">全部教师</option>';
     for (const [id, name] of authors) { const o = el('option', '', name); o.value = id; sel2.append(o); }
   }
-  if (!res.json.activity.length) { box.append(el('span', 'ph', '没有记录')); return; }
+  const filtering = $('actType').value || $('actAuthor').value || $('actDate').value;
+  if (!res.json.activity.length) {
+    box.append(filtering
+      ? emptyState('没有符合条件的记录', '换个筛选条件试试。', { label: '重置筛选', fn: () => $('actReset').click() })
+      : emptyState('还没有记录', '点人、留言和定时提醒的执行情况都会记在这里。'));
+    return;
+  }
   for (const x of res.json.activity) {
     if (x.kind === 'schedule_run') {
       const row = el('div', 'item');
-      const copy = el('div');
+      row.dataset.tone = 'bad';
+      const lead = el('span', 'lead'); lead.append(icon('alert'));
+      const copy = el('div', 'body');
       const t = el('strong'); t.append(el('span', 'tag schedule', '定时'), ({ missed: '已错过', skipped: '已跳过', failed: '发送失败' }[x.status] || x.status));
       copy.append(t, el('small', '', dateTime(x.at) + (x.detail ? ' · ' + (PAUSE_REASONS[x.detail] || (x.detail === 'CALL_WINDOW_CLOSED' ? '不在允许点人的时段' : x.detail)) : '')));
-      row.append(copy); box.append(row);
+      row.append(lead, copy); box.append(row);
     } else {
       box.append(noticeRow(x));
     }
@@ -759,13 +1097,14 @@ $('actDate').onchange = loadActivity;
 $('actReset').onclick = () => { $('actType').value = ''; $('actAuthor').value = ''; $('actDate').value = ''; loadActivity(); };
 
 /* ================= 启动 ================= */
+hydrateIcons();
 (async function init() {
   const res = await api('GET', '/api/me');
   if (res.ok) {
     callWindow = res.json.callWindow;
     await enter(res.json.user);
   } else if (res.status === 0) {
-    showGate('loginForm', '连不上服务器');
+    showGate('loginForm', '连不上服务器，请检查网络后刷新');
   } else {
     showGate('loginForm', res.gatewayError || '');
   }

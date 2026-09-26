@@ -1,57 +1,80 @@
 /* ============================================================
-   老师找人通知 · 设计令牌
-   两个界面共用一套语言：教师端是操作台，大屏是通知面。
+   Caller · 设计令牌 —— 「校园信号台 School Dispatch」
+   三个界面一套语言：教师端是快速呼叫台，管理端是校务控制台，
+   大屏是公共信息牌。贯穿三端的签名是「消息信号轨道」：
+   已选择 → 已发送 → 等待显示 → 正在显示 → 已收到。
    ============================================================ */
 
 :root {
-  /* --- 墨色阶（深色面用） --- */
+  /* --- 墨色阶（大屏、重点区域） --- */
   --ink-900: #080B14;
   --ink-800: #0B1020;
   --ink-700: #121A2E;
   --ink-600: #1B2540;
   --ink-500: #2A3655;
 
-  /* --- 纸色阶（浅色面用） --- */
+  /* --- 纸色阶（教师端、管理端） --- */
   --paper-000: #FFFFFF;
   --paper-050: #F7F8FA;
-  --paper-100: #EFF1F5;
-  --paper-200: #E2E6ED;
-  --paper-300: #CBD2DD;
+  --paper-100: #EEF0F4;
+  --paper-150: #E6E9EF;   /* 侧栏、托盘等第二层中性面 */
+  --paper-200: #DDE2EA;
+  --paper-300: #C5CCD8;
 
   /* --- 文字 --- */
   --text-strong: #0E1420;
-  --text-body:   #3A4356;
-  --text-muted:  #5C6678;   /* 在 --paper-050/100 上均 ≥5:1 */
+  --text-body:   #353E51;
+  --text-muted:  #596377;   /* 在 --paper-050/100 上均 ≥5:1 */
   --on-ink-strong: #F2F5FB;
   --on-ink-body:   #B4C0D6;
-  --on-ink-muted:  #7C8AA6; /* 在 --ink-900 上 5.6:1 */
+  --on-ink-muted:  #8190AC; /* 在 --ink-900 上 ≥6:1 */
   --on-ink-faint:  #64738F; /* 仅用于非文字的分隔与描边 */
 
-  /* --- 强调色 --- */
-  --accent:        #2B5CE6;   /* 操作台主色：靛蓝 */
-  --accent-press:  #1F47BC;
-  --accent-wash:   #EAF0FE;
-  --gold:          #F0B429;   /* 展示面主色：暖金 */
+  /* --- 信号色 --- */
+  --signal:        #2454C6;   /* 信号蓝：主操作、选中 */
+  --signal-press:  #1B409E;
+  --signal-wash:   #E9EFFC;
+  --signal-line:   #C6D5F6;
+  --gold:          #F0B429;   /* 暖金：大屏通知、品牌识别、信号在途 */
+  --gold-deep:     #8A5A00;   /* 金色系在浅底上的文字色 */
+  --gold-wash:     #FFF5DE;
   --gold-dim:      #8A6A1F;
-  --live:          #2FBF71;   /* 在线状态 */
-  --alert:         #E0483C;
+  --ok:            #18794E;   /* 确认绿：在线、已收到、成功 */
+  --ok-wash:       #E6F4EC;
+  --ok-line:       #B5DEC7;
+  --ok-on-ink:     #45D98E;
+  --alert:         #B9382E;   /* 警戒红：紧急广播、不可逆操作 */
+  --alert-wash:    #FBEAE8;
+  --alert-line:    #F0C4BF;
+  --alert-on-ink:  #FF8F85;
+  --warn-dot:      #E09A12;
+
+  /* 兼容旧名 */
+  --accent: var(--signal);
+  --live: var(--ok);
 
   /* --- 字体 ---
-     内容 100% 是中文姓名，所以不引入任何西文字体：中文字库文件普遍 5–10MB，
-     教室内网加载会明显拖慢开机自启的大屏。直接命中各平台最端正的黑体，
-     数字与标点也交给同一套字，版面更整齐。 */
+     不引入任何网络字体：中文字库普遍 5–10MB，教室内网加载会拖慢开机自启的大屏。 */
   --font-sans:
-    "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC",
-    "Noto Sans CJK SC", "Microsoft YaHei", "Hiragino Sans GB",
-    system-ui, sans-serif;
+    "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei",
+    "Source Han Sans SC", "Noto Sans CJK SC", "Hiragino Sans GB", system-ui, sans-serif;
+  --font-display:
+    "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC",
+    "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  /* 只给时间、倒计时、编号用 */
+  --font-num: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Menlo", monospace;
 
-  /* --- 字号阶梯（每级 ≥1.23 倍，只有四级） --- */
-  --fs-meta: 13px;   /* 状态、计数、辅助说明 */
-  --fs-ui:   16px;   /* 输入框、按钮、标签 */
-  --fs-name: 21px;   /* 学生姓名 —— 操作台的主角 */
-  --fs-title:30px;   /* 页面标题 */
+  /* --- 字号：页面标题 / 任务标题 / 正文 / 元信息 --- */
+  --fs-page:  30px;
+  --fs-task:  21px;
+  --fs-body:  16px;
+  --fs-meta:  13px;
+  --fs-name:  20px;   /* 教师端名单格子 */
+  /* 兼容旧名 */
+  --fs-ui: var(--fs-body);
+  --fs-title: var(--fs-page);
 
-  /* --- 间距节奏（4 基数，按用途取名而非取值） --- */
+  /* --- 间距（4 基数，按用途命名） --- */
   --gap-hair: 4px;
   --gap-tight: 8px;
   --gap-item: 12px;
@@ -60,25 +83,26 @@
   --gap-section: 48px;
 
   /* --- 圆角 --- */
+  --r-xs: 6px;
   --r-sm: 8px;
   --r-md: 12px;
-  --r-lg: 18px;
+  --r-lg: 16px;
   --r-pill: 999px;
 
-  /* --- 层次（带偏移与柔化，不是零偏移光晕） --- */
-  --lift-1: 0 1px 2px rgba(14, 20, 32, .06),
-            0 2px 6px rgba(14, 20, 32, .04);
-  --lift-2: 0 2px 4px rgba(14, 20, 32, .07),
-            0 8px 20px rgba(14, 20, 32, .08);
-  --lift-3: 0 4px 8px rgba(14, 20, 32, .08),
-            0 18px 44px rgba(14, 20, 32, .14);
+  /* --- 触控 --- */
+  --hit: 44px;
 
-  /* --- 缓动：指数式减速，从已可见状态出发 --- */
+  /* --- 层次（带偏移与柔化） --- */
+  --lift-1: 0 1px 2px rgba(14, 20, 32, .06), 0 1px 4px rgba(14, 20, 32, .04);
+  --lift-2: 0 2px 4px rgba(14, 20, 32, .06), 0 8px 22px rgba(14, 20, 32, .08);
+  --lift-3: 0 6px 12px rgba(14, 20, 32, .08), 0 22px 48px rgba(14, 20, 32, .16);
+
+  /* --- 缓动 --- */
   --ease-out: cubic-bezier(.16, 1, .3, 1);
   --ease-io:  cubic-bezier(.65, 0, .35, 1);
   --t-fast: 140ms;
-  --t-mid:  260ms;
-  --t-slow: 520ms;
+  --t-mid:  220ms;
+  --t-slow: 520ms;   /* 仅大屏关键入场 */
 }
 
 * { box-sizing: border-box; }
@@ -88,22 +112,25 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   font-family: var(--font-sans);
-  font-feature-settings: "tnum" 1;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* --- 浏览器自带的那部分表面，也归设计系统管 --- */
-::selection { background: var(--accent); color: #fff; }
+::selection { background: var(--signal); color: #fff; }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 3px solid var(--signal);
   outline-offset: 2px;
-  border-radius: var(--r-sm);
 }
 
 /* 数字一律等宽对齐，时钟和计数不会跳动 */
-.tnum { font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.tnum { font-variant-numeric: tabular-nums; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

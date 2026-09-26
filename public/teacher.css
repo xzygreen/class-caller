@@ -1,0 +1,53 @@
+/* ============================================================
+   Caller · 教师端专属布局（快速呼叫台）
+   ============================================================ */
+
+.ident-text { min-width: 0; }
+.top .ident .stamp { flex: none; }
+
+/* 点人页：名单在上、托盘在下，给托盘让出空间 */
+#tab-call { padding-bottom: calc(var(--tray-h, 80px) + 32px); }
+#tab-call .main { min-width: 0; }
+#windowNotice { margin-bottom: var(--gap-item); }
+#gridEmpty .empty-state { padding: var(--gap-block) 0; }
+
+.send .send-target { margin-left: 2px; }
+
+/* 班级留言：表单 + 预览（桌面并排，手机按 表单 → 预览 → 列表 的顺序） */
+.shell.ann { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 960px) {
+  .shell.ann { grid-template-columns: minmax(0, 1fr) 400px; grid-template-areas: "form preview" "list preview"; align-items: start; gap: var(--gap-group) var(--gap-block); }
+  .ann-form { grid-area: form; }
+  .ann-list { grid-area: list; }
+  .ann-preview { grid-area: preview; position: sticky; top: 132px; }
+}
+.ann-preview .screen-169 { margin: 6px; }
+
+/* 定时提醒：页内选人 */
+.sch-search { margin-top: 10px; }
+.sch-search input { min-height: var(--hit); font-size: 16px; }
+.sch-grid { max-height: 232px; overflow: auto; margin-top: 8px; padding: 2px; }
+#schPicked .ph { font-size: 14px; }
+#schUseCall { margin-top: 6px; }
+.plain-fieldset { border: 0; padding: 0; margin: 0 0 var(--gap-item); }
+.plain-fieldset legend { padding: 0; }
+
+/* 记录筛选：标签可见 */
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 var(--gap-item); align-items: end; margin-bottom: var(--gap-tight); }
+
+@media (max-width: 720px) {
+  .top-in { flex-wrap: wrap; }
+  .top .ident { order: 1; flex: 1 1 0; }
+  .menu-wrap { order: 2; }
+  .top .states { order: 3; flex-basis: 100%; }
+  .top .ident .sep, .top .brand .brand-name { display: none; }
+  .top .ident h1 { font-size: 18px; }
+  .send .send-target { display: none; }
+  .tray[data-empty] #msg { display: none; }
+  /* 窄屏没选人时「已选 0 人」是多余的，把位置让给操作提示，免得提示被截断 */
+  .tray .picked-btn[data-empty] b { display: none; }
+  #home .rail { order: 2; }
+}
+@media (min-width: 721px) {
+  .tray #traySignal { display: none !important; }
+}

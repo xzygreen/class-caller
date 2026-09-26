@@ -2,177 +2,226 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>老师找人 · 管理端</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FFFFFF">
+<title>Caller · 管理端</title>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="admin.css">
 </head>
 <body>
 
 <div id="gate" class="gate" hidden>
   <form id="loginForm">
-    <h1>管理端</h1>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
+    <h1>管理员登录</h1>
     <p class="sub">仅限管理员账号。教师请使用 <a href="/teacher.html">教师端</a>。</p>
     <label for="loginUser">登录名</label>
     <input type="text" id="loginUser" autocomplete="username" required autocapitalize="off" spellcheck="false">
     <label for="loginPwd">密码</label>
     <input type="password" id="loginPwd" autocomplete="current-password" required>
     <p id="loginErr" class="err" role="alert"></p>
-    <button type="submit" class="btn btn-go" id="loginBtn">登录</button>
+    <button type="submit" class="btn btn-primary" id="loginBtn"><span>登录</span></button>
   </form>
   <div id="setupPanel" class="panel" hidden>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
     <h1>尚未初始化</h1>
     <p class="sub">系统还没有管理员。请在服务器上创建首个管理员：</p>
-    <pre style="font-size:13px;background:var(--paper-050);padding:12px;border-radius:8px;overflow:auto">ADMIN_USERNAME=admin ADMIN_PASSWORD='强密码' \
+    <pre>ADMIN_USERNAME=admin ADMIN_PASSWORD='强密码' \
 npm run init-admin</pre>
-    <p class="sub">或以 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 环境变量启动服务一次。完成后刷新本页。</p>
+    <p class="sub">或用 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 环境变量启动服务一次。完成后刷新本页。</p>
   </div>
 </div>
 
 <div id="app" hidden>
-  <div class="top">
+  <header class="top">
     <div class="top-in">
-      <h1>老师找人 · 管理端<small id="subtitle"></small></h1>
-      <span class="pill" id="windowPill"><i></i><span id="windowText">作息</span></span>
-      <span class="muted" id="whoami"></span>
-      <a class="btn btn-off btn-sm" href="/teacher.html">教师端</a>
-      <button class="btn btn-off btn-sm" id="logout" type="button">退出登录</button>
+      <div class="ident">
+        <a class="brand" href="/admin.html"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></a>
+      </div>
+      <div class="states" id="schoolState" aria-label="全校状态">
+        <span class="status" id="windowPill"><svg data-icon="clock"></svg><span id="windowText">作息</span></span>
+        <span class="status" id="fleetPill" hidden><svg data-icon="monitor"></svg><span id="fleetText"></span></span>
+      </div>
+      <div class="menu-wrap">
+        <button class="who" id="whoBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="whoMenu" aria-label="个人菜单">
+          <span class="avatar" id="avatar" aria-hidden="true"></span><span class="who-name" id="whoami"></span><svg data-icon="down"></svg>
+        </button>
+        <div class="menu" id="whoMenu" hidden>
+          <div class="menu-head" id="whoHead"></div>
+          <a href="/teacher.html"><svg data-icon="users"></svg>教师端</a>
+          <button type="button" class="danger" id="logout"><svg data-icon="logout"></svg>退出登录</button>
+        </div>
+      </div>
     </div>
-  </div>
+    <div class="tabs" id="groups" role="tablist" aria-label="管理分区">
+      <button type="button" role="tab" data-group="today" aria-selected="true">今日<span class="count" id="gToday"></span></button>
+      <button type="button" role="tab" data-group="org" aria-selected="false" tabindex="-1">组织</button>
+      <button type="button" role="tab" data-group="dispatch" aria-selected="false" tabindex="-1">调度<span class="count" id="gDispatch"></span></button>
+      <button type="button" role="tab" data-group="security" aria-selected="false" tabindex="-1">安全</button>
+    </div>
+  </header>
 
   <div class="shell admin">
-    <nav class="sidenav" id="nav">
-      <button data-view="overview" aria-selected="true">概览</button>
-      <button data-view="requests">待审批申请<b id="navRequests"></b></button>
-      <button data-view="classes">班级与学生</button>
-      <button data-view="users">教师与权限</button>
-      <button data-view="windows">全校作息</button>
-      <button data-view="schedules">定时任务<b id="navSchedules"></b></button>
-      <button data-view="displays">大屏与设备<b id="navDisplays"></b></button>
-      <button data-view="audit">操作记录</button>
-      <button data-view="settings">系统设置</button>
+    <nav class="sidenav" id="nav" aria-label="分区内页面">
+      <div class="nav-group" data-group="today">
+        <button type="button" data-view="overview"><svg data-icon="grid"></svg>概览</button>
+        <button type="button" data-view="requests"><svg data-icon="inbox"></svg>待审批<span class="count" id="navRequests"></span></button>
+      </div>
+      <div class="nav-group" data-group="org" hidden>
+        <button type="button" data-view="classes"><svg data-icon="school"></svg>班级与学生</button>
+        <button type="button" data-view="users"><svg data-icon="users"></svg>教师与权限</button>
+      </div>
+      <div class="nav-group" data-group="dispatch" hidden>
+        <button type="button" data-view="windows"><svg data-icon="clock"></svg>全校作息</button>
+        <button type="button" data-view="schedules"><svg data-icon="calendar"></svg>定时任务<span class="count" id="navSchedules"></span></button>
+        <button type="button" data-view="displays"><svg data-icon="monitor"></svg>大屏与设备<span class="count" id="navDisplays"></span></button>
+      </div>
+      <div class="nav-group" data-group="security" hidden>
+        <button type="button" data-view="audit"><svg data-icon="file"></svg>操作记录</button>
+        <button type="button" data-view="settings"><svg data-icon="sliders"></svg>系统设置</button>
+      </div>
     </nav>
 
-    <main>
-      <!-- 概览 -->
-      <section id="view-overview" class="stack">
-        <div class="kpis" id="kpis"></div>
-        <div class="card"><h2>需要处理</h2><div id="todo" class="list"></div></div>
-        <div class="card"><h2>各班大屏</h2><div id="ovDisplays" class="list"></div></div>
+    <main id="main" tabindex="-1">
+      <!-- 概览：先放今天必须处理的事 -->
+      <section id="view-overview" class="stack" aria-labelledby="ovTitle">
+        <div class="page-head">
+          <div><h1 id="ovTitle">今日</h1><p id="ovDate"></p></div>
+        </div>
+        <div id="todo"></div>
+        <section class="panel" aria-labelledby="ovSignalTitle">
+          <div class="panel-head"><h2 id="ovSignalTitle">各班信号</h2><p>每个班大屏此刻在显示什么，以及学生的确认进度。</p></div>
+          <div id="ovDisplays" class="dossiers"></div>
+        </section>
       </section>
 
       <!-- 申请 -->
-      <section id="view-requests" class="card" hidden>
-        <h2>班级管理申请 <select id="reqStatus" style="width:auto;padding:6px 10px"><option value="pending">待审批</option><option value="">全部</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></h2>
-        <div id="requests" class="list"></div>
+      <section id="view-requests" class="stack" hidden aria-labelledby="reqTitle">
+        <div class="page-head">
+          <div><h1 id="reqTitle">班级管理申请</h1><p>批准后教师立即可以对该班点人、发留言和设定时提醒。</p></div>
+          <label class="field inline-field"><span>状态</span><select id="reqStatus"><option value="pending">待审批</option><option value="">全部</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></label>
+        </div>
+        <section class="panel"><div id="requests" class="list"></div></section>
       </section>
 
       <!-- 班级 -->
-      <section id="view-classes" class="stack" hidden>
-        <div class="card">
-          <h2>新增班级</h2>
-          <form id="classForm" class="grid2">
-            <label class="field"><span>班级标识（小写字母、数字、连字符；大屏绑定用，创建后不可改）</span><input type="text" id="cId" required pattern="[a-z0-9][a-z0-9-]{0,31}" placeholder="class-23"></label>
-            <label class="field"><span>班级名称</span><input type="text" id="cName" required maxlength="32" placeholder="初三23班"></label>
-            <label class="field"><span>短编号（≤4 字）</span><input type="text" id="cCode" maxlength="4" placeholder="23"></label>
-            <label class="field"><span>辅助色</span><select id="cColor"><option>blue</option><option>green</option><option>orange</option><option>purple</option><option>teal</option><option>red</option></select></label>
-            <label class="field"><span>点人自动清屏（秒，0 为常驻）</span><input type="number" id="cAuto" min="0" max="3600" value="30"></label>
-            <div class="field" style="align-self:end"><button type="submit" class="btn btn-go">新增班级</button></div>
-          </form>
+      <section id="view-classes" class="stack" hidden aria-labelledby="clsTitle">
+        <div class="page-head">
+          <div><h1 id="clsTitle">班级与学生</h1><p>每个班对应一块大屏。班级标识用于绑定大屏链接，创建后不能修改。</p></div>
+          <button type="button" class="btn btn-primary" id="newClass"><svg data-icon="plus"></svg><span>新建班级</span></button>
         </div>
         <div id="classList" class="stack"></div>
       </section>
 
       <!-- 教师 -->
-      <section id="view-users" class="stack" hidden>
-        <div class="card">
-          <h2>创建账号（教师首次登录需修改密码）</h2>
-          <form id="userForm" class="grid2">
-            <label class="field"><span>登录名</span><input type="text" id="uUser" required autocapitalize="off"></label>
-            <label class="field"><span>姓名</span><input type="text" id="uName" required maxlength="20"></label>
-            <label class="field"><span>职务（可选）</span><input type="text" id="uTitle" maxlength="12"></label>
-            <label class="field"><span>初始密码（≥8 位）</span><input type="text" id="uPwd" required minlength="8" autocomplete="off"></label>
-            <label class="field"><span>角色</span><select id="uRole"><option value="teacher">教师</option><option value="admin">管理员</option></select></label>
-            <div class="field" style="align-self:end"><button type="submit" class="btn btn-go">创建账号</button></div>
-          </form>
+      <section id="view-users" class="stack" hidden aria-labelledby="usrTitle">
+        <div class="page-head">
+          <div><h1 id="usrTitle">教师与权限</h1><p>账号属于个人；班级权限由这里授权或撤销，立即生效。</p></div>
+          <button type="button" class="btn btn-primary" id="newUser"><svg data-icon="plus"></svg><span>创建账号</span></button>
         </div>
-        <div class="card">
-          <h2>账号列表 <input type="text" id="userFilter" placeholder="搜索姓名或登录名" style="width:220px;padding:6px 10px"></h2>
-          <div style="overflow:auto"><table id="userTable"><thead><tr><th>姓名</th><th>登录名</th><th>角色</th><th>状态</th><th>已授权班级</th><th>最近登录</th><th>操作</th></tr></thead><tbody></tbody></table></div>
-        </div>
+        <section class="panel flush">
+          <div class="panel-head">
+            <label class="search user-search"><svg data-icon="search"></svg><span class="sr-only">搜索账号</span><input type="search" id="userFilter" placeholder="搜索姓名或登录名"></label>
+            <span class="muted" id="userCount"></span>
+          </div>
+          <div class="table-wrap"><table id="userTable" class="cards"><thead><tr><th>姓名</th><th>登录名</th><th>角色</th><th>状态</th><th>已授权班级</th><th>最近登录</th><th><span class="sr-only">操作</span></th></tr></thead><tbody></tbody></table></div>
+        </section>
       </section>
 
       <!-- 作息 -->
-      <section id="view-windows" class="stack" hidden>
-        <div class="card">
-          <h2>允许点人的时段（<span id="tzLabel">Asia/Shanghai</span>）</h2>
-          <div class="note warn" style="margin-bottom:var(--gap-item)">规则：开始时间包含、结束时间不包含。保存后立即生效，不符合新作息的定时任务会自动暂停并记录。</div>
-          <div class="field"><span>上课日</span>
-            <div id="wDays">
+      <section id="view-windows" class="stack" hidden aria-labelledby="winTitle">
+        <div class="page-head">
+          <div><h1 id="winTitle">全校作息</h1><p>允许点人的时段（<span id="tzLabel">Asia/Shanghai</span>）。开始时间包含、结束时间不包含。</p></div>
+        </div>
+        <section class="panel">
+          <div class="note warn"><svg data-icon="alert"></svg><span>保存后立即对全校生效。不符合新作息的定时任务会自动暂停，并通知创建它的教师。</span></div>
+          <fieldset class="plain-fieldset" style="margin-top:var(--gap-group)"><legend class="label">上课日</legend>
+            <div id="wDays" class="checks">
               <label class="check"><input type="checkbox" value="1"> 周一</label><label class="check"><input type="checkbox" value="2"> 周二</label>
               <label class="check"><input type="checkbox" value="3"> 周三</label><label class="check"><input type="checkbox" value="4"> 周四</label>
               <label class="check"><input type="checkbox" value="5"> 周五</label><label class="check"><input type="checkbox" value="6"> 周六</label>
               <label class="check"><input type="checkbox" value="0"> 周日</label>
             </div>
-          </div>
-          <table id="wTable"><thead><tr><th>开始</th><th>结束</th><th>说明</th><th></th></tr></thead><tbody></tbody></table>
+          </fieldset>
+          <div class="table-wrap"><table id="wTable" class="cards"><thead><tr><th>开始</th><th>结束</th><th>说明</th><th><span class="sr-only">操作</span></th></tr></thead><tbody></tbody></table></div>
           <div class="row" style="margin-top:var(--gap-item)">
-            <button class="btn btn-off btn-sm" id="wAdd" type="button">添加时段</button>
-            <button class="btn btn-off btn-sm" id="wDefault" type="button">恢复默认作息</button>
+            <button class="btn btn-secondary btn-sm" id="wAdd" type="button"><svg data-icon="plus"></svg><span>添加时段</span></button>
+            <button class="btn btn-ghost btn-sm" id="wDefault" type="button">恢复默认作息</button>
             <span class="spacer"></span>
-            <button class="btn btn-go" id="wSave" type="button">保存作息</button>
+            <button class="btn btn-primary" id="wSave" type="button"><span>保存作息</span></button>
           </div>
-        </div>
+        </section>
       </section>
 
       <!-- 定时任务 -->
-      <section id="view-schedules" class="card" hidden>
-        <h2>全校定时任务</h2>
-        <div id="schedules" class="list"></div>
+      <section id="view-schedules" class="stack" hidden aria-labelledby="schTitle">
+        <div class="page-head">
+          <div><h1 id="schTitle">定时任务</h1><p>全校所有班级的每日定时提醒。暂停的任务不会执行，恢复前请确认原因已经解决。</p></div>
+        </div>
+        <section class="panel"><div id="schedules" class="list"></div></section>
       </section>
 
       <!-- 大屏 -->
-      <section id="view-displays" class="card" hidden>
-        <h2>大屏内容与在线设备</h2>
-        <div id="displays" class="list"></div>
-        <h3>紧急广播</h3>
-        <form id="urgentForm" class="grid2">
-          <label class="field"><span>班级</span><select id="ugClass"></select></label>
-          <label class="field"><span>标题</span><input type="text" id="ugTitle" maxlength="30" required></label>
-          <label class="field" style="grid-column:1/-1"><span>正文</span><textarea id="ugBody" maxlength="300" required></textarea></label>
-          <label class="field"><span>自动下屏</span><select id="ugDuration"><option value="300">5 分钟</option><option value="900">15 分钟</option><option value="3600">1 小时</option><option value="0">手动撤回</option></select></label>
-          <div class="field" style="align-self:end"><button type="submit" class="btn btn-danger">立即抢占该班大屏</button></div>
-        </form>
+      <section id="view-displays" class="stack" hidden aria-labelledby="dspTitle">
+        <div class="page-head">
+          <div><h1 id="dspTitle">大屏与设备</h1><p>在线状态、正在显示的内容，以及紧急广播。</p></div>
+        </div>
+        <section class="panel"><div id="displays" class="list"></div></section>
+        <section class="panel urgent-panel" aria-labelledby="ugTitleH">
+          <div class="panel-head"><h2 id="ugTitleH"><svg data-icon="alert"></svg>紧急广播</h2><p>立即抢占所选班级的大屏，优先级高于一切内容。发送前会再确认一次影响范围。</p></div>
+          <form id="urgentForm" class="grid2">
+            <label class="field"><span>班级</span><select id="ugClass"></select></label>
+            <label class="field"><span>自动下屏</span><select id="ugDuration"><option value="300">5 分钟后</option><option value="900">15 分钟后</option><option value="3600">1 小时后</option><option value="0">手动撤回</option></select></label>
+            <label class="field span-all"><span>标题</span><input type="text" id="ugTitle" maxlength="30" required placeholder="例：全体注意"></label>
+            <label class="field span-all"><span>正文</span><textarea id="ugBody" maxlength="300" required></textarea></label>
+            <div class="field span-all row end"><button type="submit" class="btn btn-danger-quiet" id="ugSend"><svg data-icon="megaphone"></svg><span>发送紧急广播…</span></button></div>
+          </form>
+        </section>
       </section>
 
       <!-- 审计 -->
-      <section id="view-audit" class="card" hidden>
-        <h2>操作记录 <span class="row"><input type="text" id="auditFilter" placeholder="按动作前缀过滤，如 access." style="width:220px;padding:6px 10px"><button class="link" id="auditReload">刷新</button></span></h2>
-        <div style="overflow:auto"><table id="auditTable"><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>详情</th><th>来源</th></tr></thead><tbody></tbody></table></div>
+      <section id="view-audit" class="stack" hidden aria-labelledby="audTitle">
+        <div class="page-head">
+          <div><h1 id="audTitle">操作记录</h1><p>谁在什么时候做了什么。最近 300 条。</p></div>
+          <div class="row">
+            <label class="field inline-field"><span>类别</span>
+              <select id="auditFilter">
+                <option value="">全部</option><option value="access.">班级权限</option><option value="user.">账号</option>
+                <option value="class.">班级与名单</option><option value="notice.">通知</option><option value="display.">大屏</option>
+                <option value="schedule.">定时任务</option><option value="call_windows.">作息</option><option value="settings.">设置</option><option value="session.">会话</option>
+              </select>
+            </label>
+            <button class="btn btn-secondary btn-sm" id="auditReload" type="button"><svg data-icon="refresh"></svg><span>刷新</span></button>
+          </div>
+        </div>
+        <section class="panel flush">
+          <div class="table-wrap"><table id="auditTable" class="cards"><thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>来源</th></tr></thead><tbody></tbody></table></div>
+        </section>
       </section>
 
       <!-- 设置 -->
-      <section id="view-settings" class="stack" hidden>
-        <div class="card">
-          <h2>留言显示策略</h2>
+      <section id="view-settings" class="stack" hidden aria-labelledby="setTitle">
+        <div class="page-head"><div><h1 id="setTitle">系统设置</h1></div></div>
+        <section class="panel">
+          <div class="panel-head"><h2>留言显示策略</h2></div>
           <label class="field"><span>教师发布的普通留言</span>
-            <select id="setPolicy"><option value="immediate">立即显示（即使正在上课）</option><option value="next_window">上课期间推迟到下一课间显示</option></select>
+            <select id="setPolicy"><option value="immediate">立即显示（即使正在上课）</option><option value="next_window">上课期间推迟到下一个课间显示</option></select>
             <small>紧急广播不受此设置影响，仅管理员可用。</small>
           </label>
-          <button class="btn btn-go btn-sm" id="setSave" type="button">保存</button>
-        </div>
-        <div class="card">
-          <h2>会话</h2>
-          <p class="muted">升级或怀疑泄露时，可强制所有账号（包括你自己）重新登录。</p>
-          <button class="btn btn-danger btn-sm" id="revokeAll" type="button">强制所有人重新登录</button>
-        </div>
+          <button class="btn btn-primary btn-sm" id="setSave" type="button"><span>保存</span></button>
+        </section>
+        <section class="panel danger-zone">
+          <div class="panel-head"><h2>会话</h2><p>升级系统或怀疑密码泄露时，可以强制所有账号（包括你自己）重新登录。</p></div>
+          <button class="btn btn-danger-quiet btn-sm" id="revokeAll" type="button"><span>强制所有人重新登录…</span></button>
+        </section>
       </section>
     </main>
   </div>
 </div>
 
-<dialog id="dlg"><h2 id="dlgTitle"></h2><div id="dlgBody"></div><div class="row end" style="margin-top:var(--gap-item)"><button class="btn btn-off" id="dlgClose" type="button">关闭</button></div></dialog>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="ui.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>
