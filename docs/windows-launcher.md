@@ -1,6 +1,6 @@
 # Windows 7/10 大屏启动器部署
 
-本项目把 Win7/Win7 风格程序启动在**运行 `display.html` 的大屏机**上，而不是老师机。Linux 服务器只能推送事件，不能直接在远端 Windows 桌面执行程序。
+本项目把 Win7/Win7 风格程序启动在**运行 `/display` 的大屏机**上，而不是老师机。Linux 服务器只能推送事件，不能直接在远端 Windows 桌面执行程序。
 
 仓库交付的是可审计的 Win32 C 源码和 x86 构建脚本。当前 macOS 开发机没有 Windows/i686 工具链，因此仓库**不包含伪造或未经验证的预编译 EXE**；请在受控 Windows 或 MinGW-w64 构建机生成 `win7-launcher.exe`。
 
@@ -165,7 +165,7 @@ classcaller://v1/call?payload=<base64url>
 }
 ```
 
-这样 `display.html` 不再尝试协议，避免同一事件启动两次。然后在**大屏机**执行：
+这样 `/display` 不再尝试协议，避免同一事件启动两次。然后在**大屏机**执行：
 
 ```bat
 cd /d D:\tools
@@ -218,7 +218,7 @@ D:\tools\*.cmd
 
 上课前按顺序检查：
 
-1. 打开 `https://校园域名.example/display.html`，确认连接状态为“已连接”。
+1. 打开 `https://校园域名.example/display?class=class-a`（换成本教室的班级标识），确认连接状态为“已连接”。
 2. 协议模式运行 `register-protocol.cmd`；原生模式确认 watcher 窗口显示 `watcher connected`。
 3. 教师端手动选择一名测试学生并发送。
 4. 确认大屏显示姓名，目标程序收到 `--class-caller-v1`，且老师点击“再次通知”时会再启动一次。

@@ -26,19 +26,33 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 }
 .stamp.lg { min-width: 52px; height: 44px; font-size: 18px; border-radius: var(--r-sm); }
 
+#app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+
+/* ---------- 项目署名：随内容滚动，不覆盖操作 ---------- */
+.project-credit {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0 6px;
+  width: 100%; margin: 0 auto; padding: 12px 20px 24px;
+  color: var(--text-muted); font-size: 12px; line-height: 1.6; text-align: center;
+}
+.project-credit > span { white-space: nowrap; }
+.project-credit a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; color: inherit; border-radius: var(--r-xs); }
+.project-credit a:hover { color: var(--text-strong); }
+#app > .project-credit { margin-top: auto; }
+
 /* ---------- 登录闸门 ---------- */
 .gate {
   position: fixed; inset: 0; z-index: 60;
-  display: grid; place-items: center; padding: 24px; overflow: auto;
+  display: flex; flex-direction: column; align-items: center; padding: 24px; overflow: auto;
   background:
     linear-gradient(180deg, var(--ink-800) 0 180px, transparent 180px),
     var(--paper-050);
 }
 .gate form, .gate .panel {
-  width: 100%; max-width: 400px;
+  width: 100%; max-width: 400px; flex: none; margin-top: auto;
   background: var(--paper-000); padding: var(--gap-block) 28px 28px;
   border-radius: var(--r-lg); box-shadow: var(--lift-3);
 }
+.gate > .project-credit { flex: none; margin-bottom: auto; padding: 16px 0 0; max-width: 400px; }
 .gate .brand { margin-bottom: var(--gap-group); }
 .gate h1 { font-size: var(--fs-page); font-weight: 750; letter-spacing: -.01em; color: var(--text-strong); margin: 0 0 6px; line-height: 1.2; }
 .gate .sub { font-size: 14px; color: var(--text-muted); margin: 0 0 var(--gap-group); }
@@ -224,7 +238,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 .count:empty { display: none; }
 
 /* ---------- 布局 ---------- */
-.shell { max-width: 1280px; margin: 0 auto; padding: var(--gap-group) 20px 72px; display: grid; gap: var(--gap-group); }
+.shell { width: 100%; max-width: 1280px; margin: 0 auto; padding: var(--gap-group) 20px 72px; display: grid; gap: var(--gap-group); }
 .shell.two { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 960px) {
   .shell.two { grid-template-columns: minmax(0, 1fr) 360px; align-items: start; gap: var(--gap-block); }

@@ -198,7 +198,7 @@ async function loadHome() {
   box.innerHTML = '';
   if (!d.classes.length) {
     box.append(me.role === 'admin'
-      ? emptyState('还没有任何班级', '请先在管理端新增班级并录入名单。', { label: '打开管理端', fn: () => { location.href = '/admin.html'; } })
+      ? emptyState('还没有任何班级', '请先在管理端新增班级并录入名单。', { label: '打开管理端', fn: () => { location.href = '/admin'; } })
       : emptyState('还没有获批的班级', '在下方选择班级提交申请，管理员批准后这里会出现「进入班级」。', { label: '去申请', fn: () => $('requestClass').focus() }));
   }
   for (const c of d.classes) {

@@ -216,7 +216,7 @@ systemctl --no-pager --lines=5 status class-caller
 echo
 echo "完成。接下来："
 echo "  1. 创建首个管理员（若上面提示未创建）：cd $APP_DIR && sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN scripts/init-admin.js"
-echo "  2. 打开 https://你的域名/admin.html 维护班级、名单、作息，审批教师申请"
+echo "  2. 打开 https://你的域名/admin 维护班级、名单、作息，审批教师申请"
 echo "  3. 用新版 $SOURCE_DIR/nginx.conf.example 更新 Nginx（必须 auth_basic off，SSE 必须关闭缓冲）"
 echo "  4. 看日志：journalctl -u class-caller -f"
 echo "  5. 若使用 Cloudflare：让 /api/* 跳过 Managed Challenge、Under Attack Mode、Access 和缓存"

@@ -134,6 +134,39 @@ test('本地 CSS / JS 引用都带当前版本号，发版后浏览器与 CDN �
   }
 });
 
+test('三端项目署名保留 MIT，GitHub 文字链接在新标签页打开', () => {
+  for (const html of [teacherHtml, adminHtml, displayHtml]) {
+    assert.ok(html.includes('由 xzygreen 开发') && html.includes('基于 MIT License 发布'));
+    const links = [...html.matchAll(/<a\b[^>]*href="https:\/\/github\.com\/xzygreen\/class-caller"[^>]*>GitHub 开源项目<\/a>/g)];
+    assert.ok(links.length > 0);
+    for (const [link] of links) {
+      assert.match(link, /target="_blank"/);
+      assert.match(link, /rel="noopener noreferrer"/);
+    }
+    assert.ok(!html.includes('未经授权不可商用'));
+  }
+  for (const html of [teacherHtml, adminHtml]) {
+    const [gate, app] = html.split('<div id="app" hidden>');
+    assert.ok(gate.includes('<footer class="project-credit"'), '登录闸门内有署名');
+    assert.ok(app.includes('<footer class="project-credit"'), '登录后有独立署名');
+  }
+  assert.ok(teacherHtml.indexOf('<footer class="project-credit"', teacherHtml.indexOf('id="tray"')) > teacherHtml.indexOf('id="tray"'));
+  assert.ok(read('teacher.css').includes('.tray:not([hidden]) ~ .project-credit'));
+});
+
+test('三端使用短地址及版本化的本地图标', () => {
+  const { version } = require('../package.json');
+  for (const html of [teacherHtml, adminHtml, displayHtml]) {
+    for (const file of ['favicon.svg', 'favicon.ico', 'apple-touch-icon.png']) {
+      assert.ok(html.includes(`href="/${file}?v=${version}"`));
+    }
+  }
+  for (const source of [teacherHtml, adminHtml, displayHtml, teacherJs, adminJs, displayJs]) {
+    assert.ok(!/(teacher|admin|display)\.html/.test(source), '导航、配置说明和复制的链接不得使用旧地址');
+  }
+  assert.ok(adminJs.includes("'/display?class=' + encodeURIComponent(id)"));
+});
+
 test('反向代理显式关闭 Basic Auth，并为 SSE 关闭缓冲', () => {
   assert.ok((nginx.match(/auth_basic off;/g) || []).length >= 3);
   assert.ok(nginx.includes('proxy_hide_header WWW-Authenticate'));

@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Caller 大屏</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.0">
+<link rel="stylesheet" href="tokens.css?v=2.1.2">
+<link rel="icon" href="/favicon.ico?v=2.1.2" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.2" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.2">
 <style>
   /* 版面单位：取宽、高中更紧的一边（16:9 时 1u = 1vw）。
      1366×768、1080p、4K 等比缩放；超宽屏按高度收住，4:3 按宽度收住。 */
@@ -205,7 +208,7 @@
 
   /* ---- 等待队列提示 ---- */
   #queueHint {
-    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 4;
+    margin: 4px 0; max-width: 100%;
     padding: 5px 14px; border-radius: var(--r-pill); font-size: max(13px, calc(1 * var(--u)));
     background: rgba(20,28,48,.82); border: 1px solid var(--ink-600); color: var(--on-ink-muted);
   }
@@ -245,12 +248,20 @@
   }
 
   /* ============ 底栏 ============ */
-  .foot {
-    border-top: 1px solid var(--ink-600); padding: 0 3vw;
+  .foot { border-top: 1px solid var(--ink-600); padding: 0 3vw; }
+  .message-row {
     display: grid; grid-template-rows: 0fr;
     transition: grid-template-rows var(--t-mid) var(--ease-out);
   }
-  body.active .foot.has-msg { grid-template-rows: 1fr; }
+  body.active .foot.has-msg .message-row { grid-template-rows: 1fr; }
+  .foot-status { display: flex; align-items: center; flex-wrap: wrap; gap: 0 16px; min-height: 44px; }
+  .project-credit {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 6px;
+    margin-left: auto; color: var(--on-ink-muted); font-size: max(12px, calc(.75 * var(--u))); line-height: 1.6;
+  }
+  .project-credit > span { white-space: nowrap; }
+  .project-credit a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; color: inherit; text-underline-offset: 3px; cursor: pointer; }
+  .project-credit a:hover { color: var(--on-ink-body); }
   #message {
     overflow: hidden; font-size: calc(2.6 * var(--u)); font-weight: 700;
     color: var(--gold); text-align: center; overflow-wrap: anywhere;
@@ -289,12 +300,12 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   #audioTip {
-    left: 1.6vw; bottom: 14px; transform: translateY(6px);
-    padding: 7px 15px; font-size: 14px;
+    display: none; margin: 4px 0; max-width: 100%;
+    padding: 7px 15px; border-radius: var(--r-pill); font-size: 14px;
     background: rgba(240,180,41,.14);
     border: 1px solid rgba(240,180,41,.45); color: var(--gold);
   }
-  #audioTip.show { transform: none; }
+  #audioTip.show { display: flex; }
 
   #launchWarning {
     top: 9vh; max-width: min(680px, 88vw); border-radius: var(--r-sm);
@@ -313,6 +324,8 @@
     body { grid-template-rows: auto auto 1fr auto; min-height: 100vh; }
     #narrowHint { display: block; }
     .rail { flex-wrap: wrap; }
+    .foot-status { justify-content: center; padding: 8px 0; }
+    .project-credit { width: 100%; justify-content: center; margin-left: 0; }
     .ctl .ctl-text { display: none; }
     body.active #call { min-height: 70vh; }
     #names { min-height: 40vh; }
@@ -387,15 +400,22 @@
 </main>
 
 <footer class="foot" id="foot">
-  <div id="message"><span></span></div>
+  <div class="message-row"><div id="message"><span></span></div></div>
   <div id="progress"><i></i></div>
+  <div class="foot-status">
+    <div id="audioTip" role="status">点一下画面开启提示音</div>
+    <div id="queueHint" role="status"></div>
+    <div class="project-credit" aria-label="项目信息">
+      <span>由 xzygreen 开发 ·</span>
+      <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
+      <span>· 基于 MIT License 发布</span>
+    </div>
+  </div>
 </footer>
 
-<div id="queueHint"></div>
 <div class="toast" id="reconnect">正在重新连接…</div>
-<div class="toast" id="audioTip">点一下画面开启提示音</div>
 <div class="toast" id="launchWarning" role="alert">浏览器阻止了本地程序启动。请启用 classcaller 协议，或改用 D:\tools\win7-launcher.exe 原生监听模式后重新发送。</div>
 
-<script src="display.js?v=2.1.0"></script>
+<script src="display.js?v=2.1.2"></script>
 </body>
 </html>

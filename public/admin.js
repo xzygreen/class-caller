@@ -97,7 +97,7 @@ wireMenu($('whoBtn'), $('whoMenu'));
 
 function enter(user) {
   me = user;
-  if (me.mustChangePassword) { location.href = '/teacher.html'; return; }
+  if (me.mustChangePassword) { location.href = '/teacher'; return; }
   $('gate').hidden = true; $('app').hidden = false;
   $('whoami').textContent = me.displayName;
   $('avatar').textContent = initial(me.displayName);
@@ -198,7 +198,7 @@ async function loadOverview() {
     };
     if (d.pendingRequests.length) group('待审批申请', d.pendingRequests.length, 'warn', 'inbox', d.pendingRequests.slice(0, 5).map((r) => requestRow(r, loadOverview)), d.pendingRequests.length > 5 ? { label: '查看全部', fn: () => switchView('requests') } : null);
     if (d.offlineDisplays.length) {
-      group('离线的大屏', d.offlineDisplays.length, 'bad', 'monitorOff', d.offlineDisplays.map((x) => itemRow('bad', stampFor(x.code, x.color, 'lead lg'), `${x.className} 大屏离线`, '没有任何浏览器大屏或原生程序连接到该班。检查教室电脑是否开机、联网，链接是否为 display.html?class=' + x.classId,
+      group('离线的大屏', d.offlineDisplays.length, 'bad', 'monitorOff', d.offlineDisplays.map((x) => itemRow('bad', stampFor(x.code, x.color, 'lead lg'), `${x.className} 大屏离线`, '没有任何浏览器大屏或原生程序连接到该班。检查教室电脑是否开机、联网，链接是否为 /display?class=' + x.classId,
         [btn('复制大屏链接', 'btn-ghost btn-sm', () => copyDisplayLink(x.classId))])), { label: '查看设备', fn: () => switchView('displays') });
     }
     if (d.pausedSchedules.length) group('暂停的定时任务', d.pausedSchedules.length, 'bad', 'pause', d.pausedSchedules.map((s) => scheduleRow(s, loadOverview)), null);
@@ -461,7 +461,7 @@ function classCard(c) {
 function parseNames(text) { return text.split(/[\n,，、;；\s]+/).map((s) => s.trim()).filter(Boolean); }
 
 function copyDisplayLink(id) {
-  const url = location.origin + '/display.html?class=' + encodeURIComponent(id);
+  const url = location.origin + '/display?class=' + encodeURIComponent(id);
   if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('已复制：' + url), () => toast(url));
   else toast(url);
 }

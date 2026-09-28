@@ -5,8 +5,9 @@
 .ident-text { min-width: 0; }
 .top .ident .stamp { flex: none; }
 
-/* 点人页：名单在上、托盘在下，给托盘让出空间 */
-#tab-call { padding-bottom: calc(var(--tray-h, 80px) + 32px); }
+/* 点人页：页脚后为托盘留白，仅在托盘显示时生效 */
+#tab-call { padding-bottom: 32px; }
+.tray:not([hidden]) ~ .project-credit { padding-bottom: calc(var(--tray-h, 80px) + 24px); }
 #tab-call .main { min-width: 0; }
 #windowNotice { margin-bottom: var(--gap-item); }
 #gridEmpty .empty-state { padding: var(--gap-block) 0; }

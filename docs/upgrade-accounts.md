@@ -91,11 +91,11 @@ cd /opt/class-caller && sudo -u classcaller DATA_DIR=/var/lib/class-caller node 
 
 或在 `/etc/systemd/system/class-caller.service` 里临时加上 `Environment=ADMIN_USERNAME=...` 与 `Environment=ADMIN_PASSWORD=...`，`daemon-reload` 并重启一次；创建成功后**删掉这两行**再 `daemon-reload`。这两个变量只在数据仓库里没有管理员时被读取一次。
 
-打开 `https://你的域名/admin.html` 登录确认。
+打开 `https://你的域名/admin` 登录确认。
 
 ## 5. 让教师迁移
 
-1. 教师打开 `https://你的域名/teacher.html` → 「教师注册」；
+1. 教师打开 `https://你的域名/teacher` → 「教师注册」；
 2. 在个人工作台提交「申请管理班级」并写明理由（如「本班数学教师」）；
 3. 管理员在管理端「待审批申请」里批准，权限立即生效；
 4. 也可以由管理员在「教师与权限」里直接授权，或在创建账号时发初始密码。

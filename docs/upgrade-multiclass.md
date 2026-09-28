@@ -132,10 +132,10 @@ sudo journalctl -u class-caller -f
 
 | 班级 | 链接 |
 |---|---|
-| 示例班级1 | `https://你的域名/display.html?class=class-a` |
-| 示例班级2 | `https://你的域名/display.html?class=class-b` |
-| 示例班级3 | `https://你的域名/display.html?class=class-c` |
-| 示例班级4 | `https://你的域名/display.html?class=class-d` |
+| 示例班级1 | `https://你的域名/display?class=class-a` |
+| 示例班级2 | `https://你的域名/display?class=class-b` |
+| 示例班级3 | `https://你的域名/display?class=class-c` |
+| 示例班级4 | `https://你的域名/display?class=class-d` |
 
 **Windows display.exe**（每台机器）：
 
@@ -151,7 +151,7 @@ sudo journalctl -u class-caller -f
 
 ## 7. 教师端试运行
 
-按方案建议先只让一个班用：打开 `https://你的域名/teacher.html`，选班、输该班密码，发一名测试学生，确认只有该班大屏弹出、其他三块屏毫无反应；再登录另一个班发送一次，反向确认。都正常后再通知四个班启用。
+按方案建议先只让一个班用：打开 `https://你的域名/teacher`，选班、输该班密码，发一名测试学生，确认只有该班大屏弹出、其他三块屏毫无反应；再登录另一个班发送一次，反向确认。都正常后再通知四个班启用。
 
 ## 回退
 

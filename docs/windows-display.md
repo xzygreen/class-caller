@@ -3,10 +3,12 @@
 > 更新说明（账号版）：服务端新增了**班级留言**（`type: "announcement"`，含 `title`、`body`、`author`、`priority`、`queued`）。新版 `display.exe` 会以独立版式显示留言（标题 + 正文 + 发布人，没有「收到」按钮），并在底部提示等待显示的条数。旧版 exe 收到留言快照会当作清屏处理，不会显示错误内容，但要显示留言必须替换为新版。`display.ini` 不需要改。
 >
 > 编译产物由 GitHub Actions 自动生成：推送到 `main` 会在 CI 的 Artifacts 里得到 `display.exe`；打 `v*` 标签会发布带 ZIP 和校验文件的 Release。
+>
+> v2.1.2 为网页和 Windows 程序加入统一 Caller 图标。更新时先退出旧程序，只替换 `display.exe`，**保留原有 `display.ini`**（不要用 ZIP 中的示例配置覆盖它）。网页改为 `/display?class=班级标识`，旧 `.html` 链接自动跳转并保留班级参数；原生程序的 `server=` / `class_id=` 不变。
 
 大屏端不再依赖浏览器，而是一个**完整的 32 位原生 Windows 程序** `display.exe`：单文件、静态链接、零运行时依赖（不需要 .NET、VC 运行库、Electron 或浏览器），在 32 位和 64 位的 Windows 7 SP1 / Windows 10 上都能直接运行。
 
-**每台大屏机永久绑定一个班级**：`display.ini` 里的 `class_id=` 决定它连接哪个班的事件流，没有这一项程序拒绝启动，绝不会默认进入任何班级。`display.html?class=<班级id>` 仍然保留，可以在其他设备的浏览器里同时打开。
+**每台大屏机永久绑定一个班级**：`display.ini` 里的 `class_id=` 决定它连接哪个班的事件流，没有这一项程序拒绝启动，绝不会默认进入任何班级。`/display?class=<班级id>` 仍然保留，可以在其他设备的浏览器里同时打开。
 
 ## 1. 它做什么
 
@@ -158,7 +160,7 @@ D:\class-caller\install-autostart.cmd
 
 整条链路只依赖已有的 SSE，服务端不需要新增“唤醒接口”：
 
-1. 老师用个人账号登录 `teacher.html`，进入已获授权的班级后点“通知 N 人到示例班级1大屏”，`POST /api/classes/class-a/calls`（登录 Cookie 鉴权，服务端再核对该老师对这个班的权限、当前是否允许点人、学生是否在册）。
+1. 老师用个人账号登录 `/teacher`，进入已获授权的班级后点“通知 N 人到示例班级1大屏”，`POST /api/classes/class-a/calls`（登录 Cookie 鉴权，服务端再核对该老师对这个班的权限、当前是否允许点人、学生是否在册）。
 2. 服务端把新的快照 `{type:"call", classId, id, names, message, caller, createdAt, expiresAt, serverTime, queued, ...}` 广播给**该班**的所有 SSE 连接（Nginx 对各班 stream 路径关闭了缓冲和 gzip，所以是即时推送）；其他班的连接收不到。留言的快照是 `{type:"announcement", title, body, author, priority, ...}`。
 3. `display.exe` 的网络线程读到这一帧，核对 `classId` 与本机 `class_id` 一致后 `PostMessage` 给 UI 线程（不一致直接丢弃）。
 4. UI 线程比较 `id` 与上次记录的 `id`：更大才算**新**事件（重连时收到的同一快照只重绘，不重复弹出和响铃）。
@@ -183,7 +185,7 @@ exe 只使用公开接口，不需要密码：
 - `GET /api/classes/<class_id>/public/stream?role=display` —— 与浏览器大屏完全相同的本班 SSE（快照中含 `classId` 与 `acks`）；
 - `POST /api/classes/<class_id>/public/ack` —— 「收到」确认，只对本班当前通知中的姓名有效。
 
-建议在管理端「班级与学生 → 编辑」里把旧的启动器模式设为 `off`，避免 `display.html` 再去尝试 `classcaller://` 协议。
+建议在管理端「班级与学生 → 编辑」里把旧的启动器模式设为 `off`，避免 `/display` 再去尝试 `classcaller://` 协议。
 
 `nginx.conf.example` 已经满足要求（同时匹配公开与教师 SSE、`proxy_buffering off`、`gzip off`、24 小时超时、`auth_basic off`）。如果域名经过 Cloudflare，必须让 `/api/*` 跳过 Managed Challenge、Under Attack Mode 和 Access 登录；WinHTTP 不会执行挑战页里的 JavaScript，拿到 `403 Just a moment...` 时大屏必然离线。另一个要注意的是 **Windows 7 的 TLS**：
 

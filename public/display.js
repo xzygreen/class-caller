@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 
 /* ================= 班级绑定 =================
- * 每块大屏永久绑定一个班：display.html?class=class-a。
+ * 每块大屏永久绑定一个班：/display?class=class-a。
  * 没有 class 参数、或班级不存在时，不进入任何班级，只显示绑定错误。 */
 const CLASS_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const QUERY = new URLSearchParams(location.search);
@@ -561,7 +561,7 @@ async function loadRemoteConfig() {
 
   if (!classId) {
     setConn(false, '未绑定');
-    showBindError('此设备尚未绑定班级', '请在大屏链接后加上班级参数，例如 display.html?class=class-a。不会默认进入任何班级。');
+    showBindError('此设备尚未绑定班级', '请在大屏链接后加上班级参数，例如 /display?class=class-a。不会默认进入任何班级。');
     return;
   }
   if (!CLASS_ID_RE.test(classId)) {

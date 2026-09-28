@@ -5,9 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <title>Caller · 管理端</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.0">
-<link rel="stylesheet" href="ui.css?v=2.1.0">
-<link rel="stylesheet" href="admin.css?v=2.1.0">
+<link rel="stylesheet" href="tokens.css?v=2.1.2">
+<link rel="stylesheet" href="ui.css?v=2.1.2">
+<link rel="stylesheet" href="admin.css?v=2.1.2">
+<link rel="icon" href="/favicon.ico?v=2.1.2" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.2" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.2">
 </head>
 <body>
 
@@ -15,7 +18,7 @@
   <form id="loginForm">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
     <h1>管理员登录</h1>
-    <p class="sub">仅限管理员账号。教师请使用 <a href="/teacher.html">教师端</a>。</p>
+    <p class="sub">仅限管理员账号。教师请使用 <a href="/teacher">教师端</a>。</p>
     <label for="loginUser">登录名</label>
     <input type="text" id="loginUser" autocomplete="username" required autocapitalize="off" spellcheck="false">
     <label for="loginPwd">密码</label>
@@ -31,13 +34,18 @@
 npm run init-admin</pre>
     <p class="sub">或用 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 环境变量启动服务一次。完成后刷新本页。</p>
   </div>
+  <footer class="project-credit" aria-label="项目信息">
+    <span>由 xzygreen 开发 ·</span>
+    <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
+    <span>· 基于 MIT License 发布</span>
+  </footer>
 </div>
 
 <div id="app" hidden>
   <header class="top">
     <div class="top-in">
       <div class="ident">
-        <a class="brand" href="/admin.html"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></a>
+        <a class="brand" href="/admin"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></a>
       </div>
       <div class="states" id="schoolState" aria-label="全校状态">
         <span class="status" id="windowPill"><svg data-icon="clock"></svg><span id="windowText">作息</span></span>
@@ -49,7 +57,7 @@ npm run init-admin</pre>
         </button>
         <div class="menu" id="whoMenu" hidden>
           <div class="menu-head" id="whoHead"></div>
-          <a href="/teacher.html"><svg data-icon="users"></svg>教师端</a>
+          <a href="/teacher"><svg data-icon="users"></svg>教师端</a>
           <button type="button" class="danger" id="logout"><svg data-icon="logout"></svg>退出登录</button>
         </div>
       </div>
@@ -218,10 +226,15 @@ npm run init-admin</pre>
       </section>
     </main>
   </div>
+  <footer class="project-credit" aria-label="项目信息">
+    <span>由 xzygreen 开发 ·</span>
+    <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
+    <span>· 基于 MIT License 发布</span>
+  </footer>
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="ui.js?v=2.1.0"></script>
-<script src="admin.js?v=2.1.0"></script>
+<script src="ui.js?v=2.1.2"></script>
+<script src="admin.js?v=2.1.2"></script>
 </body>
 </html>
