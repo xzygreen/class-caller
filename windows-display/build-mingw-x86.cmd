@@ -14,9 +14,16 @@ set CRT_FLAGS=
 i686-w64-mingw32-gcc.exe --help=target 2>nul | findstr /c:"-mcrtdll=" >nul && set CRT_FLAGS=-mcrtdll=msvcrt-os
 
 if not exist build mkdir build
+pushd src
+i686-w64-mingw32-windres.exe --input display.rc --output ..\build\display-res.o --output-format coff --target pe-i386
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
+popd
 i686-w64-mingw32-gcc.exe -std=c11 -O2 -Wall -Wextra -municode -mwindows -static %CRT_FLAGS% ^
   -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 ^
-  -Wl,--subsystem,windows:6.01 -o build\display.exe src\display.c ^
+  -Wl,--subsystem,windows:6.01 -o build\display.exe src\display.c build\display-res.o ^
   -lwinhttp -lgdi32 -lmsimg32 -luser32 -lshell32 -ladvapi32
 if errorlevel 1 exit /b %errorlevel%
 

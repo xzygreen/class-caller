@@ -12,7 +12,7 @@
  *   5. 待机显示时钟、日期与班级名称/编号，方便巡检设备绑定是否正确；
  *   6. 服务器上找不到该班级时显示醒目的「班级绑定错误」，不展示任何通知。
  *
- * 单文件、无第三方依赖，只用 user32/gdi32/msimg32/winhttp/advapi32。
+ * 无第三方运行时依赖，只用 user32/gdi32/msimg32/winhttp/advapi32，图标随资源嵌入。
  */
 
 #ifndef _WIN32_WINNT
@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include "resource.h"
 
 #ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
 #define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
@@ -2442,7 +2443,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = window_proc;
     wc.hInstance = instance;
-    wc.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    wc.hIcon = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_CALLER), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+    wc.hIconSm = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_CALLER), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     wc.hCursor = NULL;
     wc.hbrBackground = NULL;
     wc.lpszClassName = CC_WINDOW_CLASS;

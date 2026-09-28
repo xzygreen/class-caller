@@ -7,7 +7,12 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 CC="${CC:-i686-w64-mingw32-gcc}"
 OBJDUMP="${OBJDUMP:-${CC%-gcc}-objdump}"
+WINDRES="${WINDRES:-${CC%-gcc}-windres}"
 mkdir -p "$ROOT/build"
+(
+  cd "$ROOT/src"
+  "$WINDRES" --input display.rc --output "$ROOT/build/display-res.o" --output-format coff --target pe-i386
+)
 
 # Windows 7 SP1 原版镜像没有 UCRT（ucrtbase / api-ms-win-crt-*），exe 必须只依赖系统自带的 msvcrt.dll。
 # mingw-w64 12 起（Homebrew 现版本）默认改链 UCRT；GCC 15+ 提供 -mcrtdll 选回 msvcrt，老版本工具链本身就默认 msvcrt。
@@ -22,7 +27,7 @@ fi
 "$CC" -std=c11 -O2 -Wall -Wextra -municode -mwindows -static $CRT_FLAGS \
   -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 \
   -Wl,--subsystem,windows:6.01 \
-  -o "$ROOT/build/display.exe" "$ROOT/src/display.c" \
+  -o "$ROOT/build/display.exe" "$ROOT/src/display.c" "$ROOT/build/display-res.o" \
   -lwinhttp -lgdi32 -lmsimg32 -luser32 -lshell32 -ladvapi32
 
 file "$ROOT/build/display.exe" || true

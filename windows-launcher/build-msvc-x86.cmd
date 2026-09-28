@@ -8,8 +8,15 @@ where cl.exe >nul 2>nul || (
 )
 
 if not exist build mkdir build
+pushd src
+rc.exe /nologo /fo ..\build\launcher.res win7-launcher.rc
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
+popd
 cl.exe /nologo /W4 /O2 /MT /TC /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 ^
-  /Fe:build\win7-launcher.exe src\win7-launcher.c ^
+  /Fe:build\win7-launcher.exe src\win7-launcher.c build\launcher.res ^
   /link /MACHINE:X86 /SUBSYSTEM:CONSOLE,6.01 advapi32.lib winhttp.lib
 if errorlevel 1 exit /b %errorlevel%
 

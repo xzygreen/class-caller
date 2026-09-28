@@ -3,9 +3,16 @@ rem 在 Visual Studio 的 "x86 Native Tools Command Prompt" 中运行，生成�
 setlocal
 cd /d "%~dp0"
 if not exist build mkdir build
+pushd src
+rc.exe /nologo /fo ..\build\display.res display.rc
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
+popd
 
 cl /nologo /W4 /O2 /MT /utf-8 /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /DUNICODE /D_UNICODE ^
-  src\display.c /Fe:build\display.exe /Fo:build\ ^
+  src\display.c build\display.res /Fe:build\display.exe /Fo:build\ ^
   /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /ENTRY:wWinMainCRTStartup ^
   winhttp.lib gdi32.lib msimg32.lib user32.lib shell32.lib advapi32.lib
 if errorlevel 1 exit /b %errorlevel%
