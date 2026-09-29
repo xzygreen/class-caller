@@ -106,6 +106,25 @@ main:focus { outline: none; }
 #wTable input { min-width: 0; }
 #wTable td:nth-child(1), #wTable td:nth-child(2) { width: 150px; }
 
+/* ---------- 操作记录：分页阅读，长内容不撑开列宽 ---------- */
+.shell.admin > main { min-width: 0; }
+.audit-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.audit-pagination p { margin: 0; color: var(--text-muted); font-size: 14px; }
+.audit-pagination .btn { min-height: var(--hit); }
+#auditTable { table-layout: fixed; }
+#auditTable th:nth-child(1) { width: 16%; }
+#auditTable th:nth-child(2) { width: 18%; }
+#auditTable th:nth-child(4) { width: 20%; }
+#auditTable td { vertical-align: top; overflow-wrap: anywhere; }
+.audit-action { display: grid; justify-items: start; gap: 6px; min-width: 0; }
+.audit-action .tag { max-width: 100%; white-space: normal; }
+@media (max-width: 760px) {
+  #auditTable tr { padding: 14px 16px; }
+  #auditTable td { grid-template-columns: 4em minmax(0, 1fr); }
+  #auditTable td[data-label=""] { grid-template-columns: 1fr; }
+  .audit-pagination > .row { margin-left: auto; }
+}
+
 /* ---------- 紧急广播 / 危险区 ---------- */
 .urgent-panel { border-color: var(--alert-line); }
 .urgent-panel .panel-head h2 svg.i { color: var(--alert); }

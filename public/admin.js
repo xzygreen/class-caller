@@ -900,25 +900,39 @@ function describeAudit(a) {
     default: return ACTIONS[a.action] || a.action;
   }
 }
-async function loadAudit() {
+const AUDIT_PAGE_SIZE = 20;
+let auditRows = [];
+let auditPage = 0;
+let auditLoading = false;
+let auditRequest = 0;
+
+function auditPlaceholder(node) {
   const tb = $('auditTable').querySelector('tbody');
-  const placeholder = (node) => { tb.innerHTML = ''; const tr = el('tr'); const x = el('td'); x.colSpan = 4; x.dataset.label = ''; x.append(node); tr.append(x); tb.append(tr); };
-  placeholder(skeleton(8));
-  const q = $('auditFilter').value;
-  const needNames = !usersCache.length || !classesCache.length;
-  const [res, u, c] = await Promise.all([
-    api('GET', '/api/admin/audit?limit=300' + (q ? '&action=' + encodeURIComponent(q) : '')),
-    needNames ? api('GET', '/api/admin/users') : null,
-    needNames ? api('GET', '/api/admin/classes') : null,
-  ]);
-  if (u && u.ok) usersCache = u.json.users;
-  if (c && c.ok) classesCache = c.json.classes;
-  if (!res.ok) return placeholder(errorState(errText(res, '操作记录加载失败'), loadAudit));
-  tb.innerHTML = '';
-  if (!res.json.audit.length) return placeholder(emptyState('没有记录', q ? '这个类别下还没有操作。' : ''));
-  for (const a of res.json.audit) {
+  const tr = el('tr');
+  const cell = el('td');
+  cell.colSpan = 4; cell.dataset.label = '';
+  cell.append(node); tr.append(cell); tb.replaceChildren(tr);
+}
+function updateAuditPager(message) {
+  const total = auditRows.length;
+  const pages = Math.max(1, Math.ceil(total / AUDIT_PAGE_SIZE));
+  const start = auditPage * AUDIT_PAGE_SIZE;
+  const text = message || (total ? `第 ${start + 1}–${Math.min(start + AUDIT_PAGE_SIZE, total)} 条，共 ${total} 条 · ${auditPage + 1} / ${pages} 页` : '共 0 条');
+  for (const node of $('view-audit').querySelectorAll('[data-audit-page]')) node.textContent = text;
+  for (const button of $('view-audit').querySelectorAll('[data-audit-step]')) {
+    button.disabled = auditLoading || !total || (Number(button.dataset.auditStep) < 0 ? auditPage === 0 : auditPage >= pages - 1);
+  }
+}
+function renderAuditPage() {
+  const tb = $('auditTable').querySelector('tbody');
+  tb.replaceChildren();
+  updateAuditPager();
+  if (!auditRows.length) return auditPlaceholder(emptyState('没有记录', $('auditFilter').value ? '这个类别下还没有操作。' : ''));
+  const start = auditPage * AUDIT_PAGE_SIZE;
+  for (const a of auditRows.slice(start, start + AUDIT_PAGE_SIZE)) {
     const tr = el('tr');
-    const what = el('div');
+    tr.dataset.auditId = a.id;
+    const what = el('div', 'audit-action');
     const tone = /delete|revoke|reject|urgent|clear_all/.test(a.action) ? 'bad' : (/approve|grant|create/.test(a.action) ? 'ok' : '');
     what.append(el('span', 'tag ' + tone, ACTIONS[a.action] || a.action), el('strong', '', describeAudit(a)));
     tr.append(
@@ -929,6 +943,41 @@ async function loadAudit() {
     );
     tb.append(tr);
   }
+}
+async function loadAudit() {
+  const request = ++auditRequest;
+  auditLoading = true; auditPage = 0; auditRows = [];
+  updateAuditPager('正在加载记录…');
+  auditPlaceholder(skeleton(8));
+  const q = $('auditFilter').value;
+  const needNames = !usersCache.length || !classesCache.length;
+  const [res, u, c] = await Promise.all([
+    api('GET', '/api/admin/audit?limit=300' + (q ? '&action=' + encodeURIComponent(q) : '')),
+    needNames ? api('GET', '/api/admin/users') : null,
+    needNames ? api('GET', '/api/admin/classes') : null,
+  ]);
+  // 快速切换筛选时，只接纳最后一次请求，避免旧列表盖住新结果。
+  if (request !== auditRequest) return;
+  auditLoading = false;
+  if (u && u.ok) usersCache = u.json.users;
+  if (c && c.ok) classesCache = c.json.classes;
+  if (!res.ok) {
+    updateAuditPager('记录加载失败');
+    return auditPlaceholder(errorState(errText(res, '操作记录加载失败'), loadAudit));
+  }
+  auditRows = res.json.audit;
+  renderAuditPage();
+}
+for (const button of $('view-audit').querySelectorAll('[data-audit-step]')) {
+  button.onclick = () => {
+    if (auditLoading || !auditRows.length) return;
+    auditPage = Math.max(0, Math.min(Math.ceil(auditRows.length / AUDIT_PAGE_SIZE) - 1, auditPage + Number(button.dataset.auditStep)));
+    renderAuditPage();
+    const section = $('view-audit');
+    section.style.scrollMarginTop = (document.querySelector('.top').offsetHeight + 16) + 'px';
+    section.scrollIntoView({ block: 'start' });
+    $('audTitle').focus({ preventScroll: true });
+  };
 }
 $('auditReload').onclick = loadAudit;
 $('auditFilter').onchange = loadAudit;

@@ -223,7 +223,7 @@ ls /var/lib/class-caller/backups          # 每日自动备份
 
 ### 操作记录
 
-所有管理操作和老师的点人、留言都带操作者、时间、来源 IP。可按操作类型筛选。
+所有管理操作和老师的点人、留言都带操作者、时间、来源 IP。可按操作类型筛选。最近 300 条记录按每页 20 条显示，列表顶部和底部均可翻页；筛选或刷新后回到第一页。
 
 ### 系统设置
 
@@ -432,6 +432,7 @@ npm test
 ```bash
 npm install --prefix /tmp/caller-browser puppeteer
 PUPPETEER_PATH=/tmp/caller-browser/node_modules/puppeteer node test/browser-layout.cjs
+PUPPETEER_PATH=/tmp/caller-browser/node_modules/puppeteer node test/browser-audit.cjs
 ```
 
 也可以通过 `PUPPETEER_PATH` 指定已有的 `puppeteer-core`，并用 `CHROME_PATH` 指定 Chrome 可执行文件。

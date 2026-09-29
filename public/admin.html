@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <title>Caller · 管理端</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.2">
-<link rel="stylesheet" href="ui.css?v=2.1.2">
-<link rel="stylesheet" href="admin.css?v=2.1.2">
-<link rel="icon" href="/favicon.ico?v=2.1.2" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.2" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.2">
+<link rel="stylesheet" href="tokens.css?v=2.1.3">
+<link rel="stylesheet" href="ui.css?v=2.1.3">
+<link rel="stylesheet" href="admin.css?v=2.1.3">
+<link rel="icon" href="/favicon.ico?v=2.1.3" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.3" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.3">
 </head>
 <body>
 
@@ -191,7 +191,7 @@ npm run init-admin</pre>
       <!-- 审计 -->
       <section id="view-audit" class="stack" hidden aria-labelledby="audTitle">
         <div class="page-head">
-          <div><h1 id="audTitle">操作记录</h1><p>谁在什么时候做了什么。最近 300 条。</p></div>
+          <div><h1 id="audTitle" tabindex="-1">操作记录</h1><p>谁在什么时候做了什么。最近 300 条，每页 20 条。</p></div>
           <div class="row">
             <label class="field inline-field"><span>类别</span>
               <select id="auditFilter">
@@ -203,9 +203,23 @@ npm run init-admin</pre>
             <button class="btn btn-secondary btn-sm" id="auditReload" type="button"><svg data-icon="refresh"></svg><span>刷新</span></button>
           </div>
         </div>
+        <nav class="audit-pagination" aria-label="操作记录分页（顶部）">
+          <p data-audit-page role="status"></p>
+          <div class="row">
+            <button class="btn btn-secondary btn-sm" type="button" data-audit-step="-1" disabled>上一页</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-audit-step="1" disabled>下一页</button>
+          </div>
+        </nav>
         <section class="panel flush">
           <div class="table-wrap"><table id="auditTable" class="cards"><thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>来源</th></tr></thead><tbody></tbody></table></div>
         </section>
+        <nav class="audit-pagination" aria-label="操作记录分页（底部）">
+          <p data-audit-page></p>
+          <div class="row">
+            <button class="btn btn-secondary btn-sm" type="button" data-audit-step="-1" disabled>上一页</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-audit-step="1" disabled>下一页</button>
+          </div>
+        </nav>
       </section>
 
       <!-- 设置 -->
@@ -234,7 +248,7 @@ npm run init-admin</pre>
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="ui.js?v=2.1.2"></script>
-<script src="admin.js?v=2.1.2"></script>
+<script src="ui.js?v=2.1.3"></script>
+<script src="admin.js?v=2.1.3"></script>
 </body>
 </html>

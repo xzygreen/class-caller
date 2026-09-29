@@ -115,6 +115,17 @@ test('管理端：班级卡片对缺失字段健壮，新建后定位到名单�
   assert.ok(adminJs.includes("u.id === me.id"), '不能删除当前登录账号');
 });
 
+test('操作记录按 20 条分页，首尾均可翻页，过期筛选响应不能覆盖当前列表', () => {
+  assert.ok(adminJs.includes('const AUDIT_PAGE_SIZE = 20'));
+  assert.ok(adminJs.includes('auditRows.slice(start, start + AUDIT_PAGE_SIZE)'));
+  assert.ok(adminJs.includes('request !== auditRequest'));
+  assert.equal((adminHtml.match(/data-audit-step="-1"/g) || []).length, 2);
+  assert.equal((adminHtml.match(/data-audit-step="1"/g) || []).length, 2);
+  assert.ok(adminHtml.includes('每页 20 条'));
+  assert.ok(read('admin.css').includes('#auditTable { table-layout: fixed; }'));
+  assert.ok(read('admin.css').includes('overflow-wrap: anywhere'));
+});
+
 test('页面脚本使用本地静态文件，不依赖第三方资源', () => {
   for (const html of [teacherHtml, adminHtml, displayHtml]) {
     assert.ok(!/<(?:script|link)[^>]+(?:src|href)=["']https?:\/\//i.test(html));
