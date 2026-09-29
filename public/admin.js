@@ -38,12 +38,13 @@ async function api(method, path, body) {
   const challenged = res.headers.get('cf-mitigated') === 'challenge';
   const basic = res.headers.has('www-authenticate');
   let gatewayError = '';
-  if (!json && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请对 /api/* 关闭 Managed Challenge';
-  else if (!json && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
-  else if (!json && !res.ok) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
+  const validJson = Boolean(json && typeof json === 'object' && !Array.isArray(json) && typeof json.ok === 'boolean');
+  if (!validJson && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请对 /api/* 关闭 Managed Challenge';
+  else if (!validJson && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
+  else if (!validJson) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
   if (res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) gateOut('登录已失效，请重新登录');
   if (res.status === 403 && json && json.error === 'ADMIN_ONLY') gateOut('该账号不是管理员');
-  return { status: res.status, ok: res.ok, json, gatewayError };
+  return { status: res.status, ok: res.ok && validJson && json.ok, json, gatewayError };
 }
 
 function stampFor(code, color, extra) {

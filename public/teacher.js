@@ -23,6 +23,9 @@ let currentTab = 'call';
 let schedules = [];
 /** 我最近一次发出的点人：信号轨道据此显示它走到了哪一步 */
 let lastSent = null;
+// 每次进入 / 离开班级都换一代；仅比较 classId 无法识别 A → B → A 的旧响应。
+let workspaceVersion = 0;
+let activityRequest = 0;
 
 const CLASS_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -35,6 +38,7 @@ const PAUSE_REASONS = {
 };
 
 async function api(method, path, body) {
+  const user = me;
   let res;
   try {
     res = await fetch(path, {
@@ -50,16 +54,17 @@ async function api(method, path, body) {
   const challenged = res.headers.get('cf-mitigated') === 'challenge';
   const basic = res.headers.has('www-authenticate');
   let gatewayError = '';
-  if (!json && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请让管理员对 /api/* 关闭 Managed Challenge 后重试';
-  else if (!json && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
-  else if (!json && !res.ok) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
-  if (res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) {
+  const validJson = Boolean(json && typeof json === 'object' && !Array.isArray(json) && typeof json.ok === 'boolean');
+  if (!validJson && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请让管理员对 /api/* 关闭 Managed Challenge 后重试';
+  else if (!validJson && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
+  else if (!validJson) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
+  if (user === me && res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) {
     gateOut(json.error === 'ACCOUNT_DISABLED' ? '账号已停用，请联系管理员' : '登录已失效，请重新登录');
   }
-  if (res.status === 403 && json && json.error === 'PASSWORD_CHANGE_REQUIRED') { showPasswordGate(); }
-  return { status: res.status, ok: res.ok, json, gatewayError };
+  if (user === me && res.status === 403 && json && json.error === 'PASSWORD_CHANGE_REQUIRED') { showPasswordGate(); }
+  return { status: res.status, ok: res.ok && validJson && json.ok, json, gatewayError };
 }
-const cpath = (sub) => '/api/classes/' + encodeURIComponent(classId) + '/' + sub;
+const cpath = (sub, id = classId) => '/api/classes/' + encodeURIComponent(id) + '/' + sub;
 
 function errText(res, fallback) {
   if (res.status === 0) return '连不上服务器，请检查网络后重试';
@@ -82,7 +87,8 @@ function showGate(which, message) {
 function showPasswordGate() { showGate('passwordForm'); }
 
 function gateOut(message) {
-  me = null;
+  workspaceVersion += 1;
+  me = null; classId = ''; klass = null;
   disconnectLive();
   clearInterval(cdTimer);
   closeSheet();
@@ -155,16 +161,18 @@ async function enter(user) {
   $('toAdmin').hidden = me.role !== 'admin';
   const wanted = new URLSearchParams(location.search).get('class') || '';
   if (CLASS_ID_RE.test(wanted)) {
-    if (await openClass(wanted)) return;
+    if (await openClass(wanted) !== false) return;
   }
-  await showHome();
+  if (me === user) await showHome();
 }
 wireMenu($('whoBtn'), $('whoMenu'));
 
 /* ================= 个人工作台 ================= */
 async function showHome() {
+  workspaceVersion += 1;
   classId = ''; klass = null; lastSent = null;
   disconnectLive();
+  clearInterval(cdTimer);
   closeSheet();
   delete document.documentElement.dataset.color;
   history.replaceState(null, '', location.pathname);
@@ -183,8 +191,10 @@ async function showHome() {
 }
 
 async function loadHome() {
+  const context = workspaceVersion;
   fill($('myClasses'), skeleton(3));
   const res = await api('GET', '/api/me/classes');
+  if (context !== workspaceVersion || !me) return;
   if (!res.ok) {
     if (res.status !== 401) fill($('myClasses'), errorState(errText(res, '班级列表加载失败'), loadHome));
     return;
@@ -348,15 +358,23 @@ function renderWindowPill() {
 
 /* ================= 班级工作台 ================= */
 async function openClass(id) {
-  classId = id;
-  const res = await api('GET', cpath('workspace'));
+  const request = ++workspaceVersion;
+  const res = await api('GET', cpath('workspace', id));
+  if (request !== workspaceVersion || !me) return null;
   if (!res.ok) {
-    classId = '';
-    if (res.status === 403 || res.status === 404) toast(errText(res, '无法进入该班级'), true);
+    toast(errText(res, '无法进入该班级'), true);
     return false;
   }
   const d = res.json;
   if (d.classId !== id) return false;
+  classId = id;
+  sending = false;
+  for (const button of ['send', 'annSend', 'schCreate']) setBusy($(button), false);
+  for (const list of ['annList', 'schList', 'activity']) $(list).replaceChildren();
+  // 筛选属于班级，不能把 A 班教师的筛选条件带入 B 班。
+  $('actType').value = ''; $('actDate').value = '';
+  $('actAuthor').innerHTML = '<option value="">全部教师</option>';
+  $('sendErr').hidden = true;
   klass = { classId: d.classId, className: d.className, code: d.code, color: d.color };
   students = d.students || [];
   maxNamesPerCall = d.maxNamesPerCall || 20;
@@ -526,9 +544,14 @@ window.addEventListener('resize', syncTrayHeight);
 
 function clearSelection() {
   if (!sel.size) return;
+  const context = workspaceVersion;
   const before = [...sel];
   sel.clear(); renderGrid(); renderPicked();
-  toast('已清空 ' + before.length + ' 人', { action: { label: '撤销', fn: () => { before.forEach((n) => sel.add(n)); renderGrid(); renderPicked(); } } });
+  toast('已清空 ' + before.length + ' 人', { action: { label: '撤销', fn: () => {
+    if (context !== workspaceVersion) return;
+    for (const name of before) if (students.includes(name) && sel.size < maxNamesPerCall) sel.add(name);
+    renderGrid(); renderPicked();
+  } } });
 }
 $('reset').onclick = clearSelection;
 
@@ -730,8 +753,9 @@ function connectLive() {
 
 async function pollStatus() {
   if ($('app').hidden || !classId) return;
+  const context = workspaceVersion;
   const res = await api('GET', cpath('status'));
-  if (!res.ok || res.json.classId !== classId) return;
+  if (context !== workspaceVersion || !res.ok || res.json.classId !== classId) return;
   display = res.json.display;
   callWindow = res.json.callWindow;
   renderWindowPill();
@@ -748,6 +772,7 @@ function setSending(v) {
 }
 
 $('send').onclick = async () => {
+  const context = workspaceVersion;
   const names = [...sel];
   if (!names.length || sending) return;
   const message = $('msg').value.trim();
@@ -755,6 +780,7 @@ $('send').onclick = async () => {
   setSending(true);
   try {
     const res = await api('POST', cpath('calls'), { names, message });
+    if (context !== workspaceVersion) return;
     if (!res.ok) {
       if (res.json && res.json.error === 'CALL_WINDOW_CLOSED') { callWindow = res.json.callWindow || callWindow; renderWindowPill(); }
       // 发送失败不自动消失：留在托盘里，直到下一次操作
@@ -772,10 +798,11 @@ $('send').onclick = async () => {
     b.dataset.state = 'success';
     setTimeout(() => { delete b.dataset.state; }, 1400);
     toast(res.json.displayedNow ? '已通知到' + klass.className + '大屏' : '已加入等待队列，当前内容结束后显示', !res.json.displays);
-  } finally { setSending(false); }
+  } finally { if (context === workspaceVersion) setSending(false); }
 };
 
 $('clear').onclick = async () => {
+  const context = workspaceVersion;
   const cur = ownEvent(display.current);
   const q = (display.queue || []).length;
   const what = !cur ? '' : (cur.type === 'call' ? '「' + cur.names.join('、') + '」' : '「' + (cur.title || '留言') + '」');
@@ -788,24 +815,30 @@ $('clear').onclick = async () => {
       { value: 'all', label: '清除当前内容和等待队列', desc: q ? '当前内容和等待中的 ' + q + ' 条都会移除，不能恢复' : '没有等待中的内容', danger: true, disabled: !q },
     ],
   });
-  if (choice) clearDisplay(choice === 'all');
+  if (choice && context === workspaceVersion) clearDisplay(choice === 'all');
 };
 async function clearDisplay(all) {
+  const context = workspaceVersion;
   const res = await api('POST', cpath('display/clear'), { all });
+  if (context !== workspaceVersion) return;
   if (!res.ok) return toast(errText(res, '清空失败'), true);
   display = res.json.display; renderNow();
   toast(all ? '大屏与等待队列已清空' : '当前内容已清除');
 }
 async function withdraw(noticeId, offerUndo) {
+  const context = workspaceVersion;
   const res = await api('POST', cpath('notices/' + noticeId + '/withdraw'), {});
+  if (context !== workspaceVersion) return;
   if (!res.ok) return toast(errText(res, '撤回失败'), true);
   if (lastSent && lastSent.noticeId === noticeId) lastSent.withdrawn = true;
   display = res.json.display; renderNow();
-  toast('已撤回', offerUndo ? { action: { label: '撤销', fn: () => resend(noticeId, false) } } : undefined);
+  toast('已撤回', offerUndo ? { action: { label: '撤销', fn: () => { if (context === workspaceVersion) resend(noticeId, false); } } } : undefined);
   return true;
 }
 async function resend(noticeId, quiet) {
+  const context = workspaceVersion;
   const res = await api('POST', cpath('notices/' + noticeId + '/resend'), {});
+  if (context !== workspaceVersion) return;
   if (!res.ok) return toast(errText(res, '再次发送失败'), true);
   if (lastSent && lastSent.noticeId === noticeId) { lastSent.withdrawn = false; lastSent.seen = false; lastSent.queued = false; lastSent.acks = new Map(); lastSent.sentAt = Date.now(); }
   display = res.json.display; renderNow();
@@ -824,7 +857,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && currentTab === 'call' && !document.querySelector('dialog[open]')) {
     if (!$('sheet').hidden) { closeSheet(); $('pickedBtn').focus(); } else if ($('search').value) { $('search').value = ''; renderGrid(); }
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && currentTab === 'call' && !$('app').hidden && !$('klassView').hidden) $('send').click();
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && currentTab === 'call' && !$('app').hidden && !$('klassView').hidden && !document.querySelector('dialog[open]')) {
+    e.preventDefault();
+    $('send').click();
+  }
 });
 
 /* ---------- 留言 ---------- */
@@ -843,6 +879,7 @@ $('annUrgent').onchange = renderPreview;
 $('annWhen').onchange = () => { $('annAtField').hidden = $('annWhen').value !== 'later'; };
 $('announceForm').onsubmit = async (e) => {
   e.preventDefault();
+  const context = workspaceVersion;
   const urgent = me.role === 'admin' && $('annUrgent').checked;
   const body = {
     title: $('annTitle').value.trim(), body: $('annBody').value.trim(),
@@ -866,10 +903,11 @@ $('announceForm').onsubmit = async (e) => {
         '操作会写入审计记录',
       ],
     });
-    if (!ok) return;
+    if (!ok || context !== workspaceVersion) return;
   }
   setBusy($('annSend'), true);
   const res = await api('POST', cpath('announcements'), body);
+  if (context !== workspaceVersion) return;
   setBusy($('annSend'), false);
   if (!res.ok) return toast(errText(res, '发布失败'), true);
   display = res.json.display; renderNow();
@@ -880,9 +918,11 @@ $('announceForm').onsubmit = async (e) => {
 };
 
 async function loadAnnouncements() {
+  const context = workspaceVersion;
   const box = $('annList');
   if (!box.children.length) fill(box, skeleton(3));
   const res = await api('GET', cpath('notices?type=announcement'));
+  if (context !== workspaceVersion) return;
   if (!res.ok) return fill(box, errorState(errText(res, '留言加载失败'), loadAnnouncements));
   if (res.json.classId !== classId) return;
   box.innerHTML = '';
@@ -950,9 +990,11 @@ $('schSearch').onkeydown = (e) => {
 $('schUseCall').onclick = () => { schSel.clear(); sel.forEach((n) => schSel.add(n)); renderSchPicker(); };
 
 async function loadSchedules() {
+  const context = workspaceVersion;
   const box = $('schList');
   if (!box.children.length) fill(box, skeleton(3));
   const res = await api('GET', cpath('schedules'));
+  if (context !== workspaceVersion) return;
   if (!res.ok) return fill(box, errorState(errText(res, '定时提醒加载失败'), loadSchedules));
   if (res.json.classId !== classId) return;
   schedules = res.json.schedules;
@@ -990,11 +1032,19 @@ async function loadSchedules() {
       const toggle = el('button', 'btn btn-ghost btn-sm', s.enabled ? (isPaused ? '恢复' : '暂停') : '启用');
       toggle.type = 'button';
       toggle.onclick = async () => {
+        if (context !== workspaceVersion) return;
         const r = await api('PATCH', cpath('schedules/' + s.id), { enabled: !active });
+        if (context !== workspaceVersion) return;
         if (!r.ok) return toast(errText(r, '操作失败'), true);
         loadSchedules();
         if (active) {
-          toast('已暂停 ' + s.time + ' 的提醒', { action: { label: '撤销', fn: async () => { const u = await api('PATCH', cpath('schedules/' + s.id), { enabled: true }); if (!u.ok) toast(errText(u, '恢复失败'), true); loadSchedules(); } } });
+          toast('已暂停 ' + s.time + ' 的提醒', { action: { label: '撤销', fn: async () => {
+            if (context !== workspaceVersion) return;
+            const u = await api('PATCH', cpath('schedules/' + s.id), { enabled: true });
+            if (context !== workspaceVersion) return;
+            if (!u.ok) toast(errText(u, '恢复失败'), true);
+            loadSchedules();
+          } } });
         } else toast('已恢复');
       };
       const edit = el('button', 'btn btn-ghost btn-sm', '改时间');
@@ -1004,8 +1054,9 @@ async function loadSchedules() {
           title: '修改提醒时间', icon: 'clock', label: '新的提醒时间', type: 'time', value: s.time, required: true,
           hint: '必须在允许点人的时段内：' + w.windows.map((x) => x.start + '–' + x.end).join('、'),
         });
-        if (!v || v === s.time) return;
+        if (!v || v === s.time || context !== workspaceVersion) return;
         const r = await api('PATCH', cpath('schedules/' + s.id), { time: v.trim() });
+        if (context !== workspaceVersion) return;
         if (!r.ok) return toast(errText(r, '修改失败'), true);
         toast('已改为每天 ' + v);
         loadSchedules();
@@ -1017,8 +1068,9 @@ async function loadSchedules() {
           title: '删除这条定时提醒？', danger: true, confirm: '删除提醒',
           impact: ['每天 ' + s.time + ' 不再自动点 ' + s.names.join('、'), '已经发出的记录会保留', '删除后不能恢复；只想临时停一下，可以用「暂停」'],
         });
-        if (!ok) return;
+        if (!ok || context !== workspaceVersion) return;
         const r = await api('DELETE', cpath('schedules/' + s.id));
+        if (context !== workspaceVersion) return;
         if (!r.ok) return toast(errText(r, '删除失败'), true);
         toast('已删除');
         loadSchedules();
@@ -1032,6 +1084,7 @@ async function loadSchedules() {
 
 $('scheduleForm').onsubmit = async (e) => {
   e.preventDefault();
+  const context = workspaceVersion;
   const names = [...schSel];
   if (!names.length) { $('schSearch').focus(); return toast('请先选择要提醒的学生', true); }
   const weekdays = [...$('schWeekdays').querySelectorAll('input:checked')].map((i) => Number(i.value));
@@ -1042,6 +1095,7 @@ $('scheduleForm').onsubmit = async (e) => {
   };
   setBusy($('schCreate'), true);
   const res = await api('POST', cpath('schedules'), body);
+  if (context !== workspaceVersion) return;
   setBusy($('schCreate'), false);
   if (!res.ok) return toast(errText(res, '创建失败'), true);
   toast('已创建：每天 ' + body.time + ' 提醒 ' + names.join('、'));
@@ -1052,6 +1106,8 @@ $('scheduleForm').onsubmit = async (e) => {
 
 /* ---------- 记录 ---------- */
 async function loadActivity() {
+  const context = workspaceVersion;
+  const request = ++activityRequest;
   const box = $('activity');
   fill(box, skeleton(5));
   const q = new URLSearchParams();
@@ -1059,6 +1115,7 @@ async function loadActivity() {
   if ($('actAuthor').value) q.set('author', $('actAuthor').value);
   if ($('actDate').value) q.set('date', $('actDate').value);
   const res = await api('GET', cpath('activity' + (q.toString() ? '?' + q : '')));
+  if (context !== workspaceVersion || request !== activityRequest) return;
   if (!res.ok) return fill(box, errorState(errText(res, '记录加载失败'), loadActivity));
   if (res.json.classId !== classId) return;
   box.innerHTML = '';

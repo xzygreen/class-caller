@@ -16,12 +16,15 @@ async function credit(page, label) {
     const r = a.getBoundingClientRect();
     const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
     const tray = document.getElementById('tray');
+    const title = document.querySelector('.top .ident h1');
+    const titleClipped = title && title.getClientRects().length && title.scrollHeight > title.clientHeight + 1;
     const luminance = (color) => color.match(/[\d.]+/g).slice(0, 3).map((v) => {
       const c = Number(v) / 255;
       return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
     }).reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
     const fg = luminance(getComputedStyle(a).color), bg = luminance(getComputedStyle(document.body).backgroundColor);
     return {
+      titleClipped,
       contrast: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
       text: a.parentElement.textContent.replace(/\s+/g, ' ').trim(),
       height: r.height, hit: hit === a || a.contains(hit),
@@ -35,6 +38,7 @@ async function credit(page, label) {
   assert.ok(result.text.includes('由 xzygreen 开发') && result.text.includes('基于 MIT License 发布'), label);
   assert.ok(result.height >= 44 && result.hit && result.clearOfTray, label + ': credit obstructed ' + JSON.stringify(result));
   assert.ok(result.overflow <= 1, label + ': horizontal overflow ' + result.overflow);
+  assert.ok(!result.titleClipped, label + ': header text clipped vertically');
   assert.ok(result.contrast >= 4.5, label + ': small-text contrast ' + result.contrast);
   assert.ok(!['fixed', 'sticky'].includes(result.position), label + ': floating credit');
   assert.equal(result.href, 'https://github.com/xzygreen/class-caller');
@@ -115,6 +119,7 @@ async function displayGeometry(page, label, mobile) {
       await page.setViewport({ width, height: width < 500 ? 844 : 768 });
       await page.goto(s.base + '/admin.html#classes');
       assert.ok(page.url().endsWith('/admin#classes'));
+      await page.waitForSelector('#gate:not([hidden])');
       await credit(page, 'admin login ' + width);
       await login(page, ADMIN);
       for (const view of ['overview', 'requests', 'classes', 'users', 'windows', 'schedules', 'displays', 'audit', 'settings']) {

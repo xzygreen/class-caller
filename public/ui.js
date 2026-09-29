@@ -86,7 +86,11 @@ function toast(text, opts) {
   }
   t.classList.add('show');
   clearTimeout(t._t);
-  function hide() { t.classList.remove('show'); }
+  function hide() {
+    t.classList.remove('show');
+    // opacity / pointer-events 不会移出键盘顺序，过期的「撤销」不能仍可 Tab 到。
+    for (const button of t.querySelectorAll('button')) button.disabled = true;
+  }
   t._t = setTimeout(hide, o.duration || (o.action ? 8000 : (o.bad ? 5000 : 2800)));
 }
 

@@ -30,7 +30,8 @@ const pause = (ms = 100) => new Promise((r) => setTimeout(r, ms));
       if (!r.url().includes('/api/admin/audit?')) return r.continue();
       const action = new URL(r.url()).searchParams.get('action');
       const audit = action === 'user.' ? users : action === 'class.' ? [] : rows.slice(0, count);
-      if (mode === 'error') return r.respond({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'INTERNAL_ERROR', message: '测试加载失败' }) });
+      if (mode === 'invalid') return r.respond({ status: 200, contentType: 'text/html', body: '<html>gateway page</html>' });
+      if (mode === 'error') return r.respond({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'INTERNAL_ERROR', message: '测试加载失败' }) });
       const respond = () => r.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, audit }) });
       if (mode === 'race' && action === 'notice.') delayed = pause(400).then(respond);
       else respond();
@@ -88,6 +89,8 @@ const pause = (ms = 100) => new Promise((r) => setTimeout(r, ms));
       }
       console.log('PASS audit 300 long records, all 15 pages, filters/boundaries/scrolling at', width);
     }
+    mode = 'invalid'; await load();
+    assert.ok(await page.$eval('#auditTable', (n) => n.textContent.includes('非应用响应')));
     mode = 'error'; await load();
     assert.ok(await page.$eval('#auditTable', (n) => n.textContent.includes('测试加载失败')));
     assert.ok(await page.$$eval('[data-audit-step]', (nodes) => nodes.every((n) => n.disabled)));
