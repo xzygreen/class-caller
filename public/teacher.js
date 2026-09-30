@@ -26,6 +26,9 @@ let lastSent = null;
 // 每次进入 / 离开班级都换一代；仅比较 classId 无法识别 A → B → A 的旧响应。
 let workspaceVersion = 0;
 let activityRequest = 0;
+let homeRequest = 0;
+let homeLoading = false;
+let homeClassesState = '';
 
 const CLASS_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -177,6 +180,9 @@ async function showHome() {
   delete document.documentElement.dataset.color;
   history.replaceState(null, '', location.pathname);
   $('home').hidden = false;
+  $('requestPanel').hidden = true;
+  $('homeIntro').textContent = '进入班级开始点人。';
+  homeClassesState = '';
   $('klassView').hidden = true;
   $('tabs').hidden = true;
   $('tray').hidden = true;
@@ -190,13 +196,20 @@ async function showHome() {
   await loadHome();
 }
 
-async function loadHome() {
+async function loadHome({ quiet = false } = {}) {
   const context = workspaceVersion;
-  fill($('myClasses'), skeleton(3));
+  const request = ++homeRequest;
+  homeLoading = true;
+  if (!quiet) {
+    homeClassesState = '';
+    fill($('myClasses'), skeleton(3));
+  }
   const res = await api('GET', '/api/me/classes');
-  if (context !== workspaceVersion || !me) return;
+  if (request !== homeRequest) return;
+  homeLoading = false;
+  if (context !== workspaceVersion || !me || $('app').hidden || quiet && $('requestBtn').dataset.loading) return;
   if (!res.ok) {
-    if (res.status !== 401) fill($('myClasses'), errorState(errText(res, '班级列表加载失败'), loadHome));
+    if (!quiet && res.status !== 401) fill($('myClasses'), errorState(errText(res, '班级列表加载失败'), loadHome));
     return;
   }
   const d = res.json;
@@ -204,12 +217,40 @@ async function loadHome() {
   renderWindowPill();
   fill($('homeWindow'), windowSummary());
 
+  const state = JSON.stringify([me.role, d.classes, d.availableClasses, d.requests]);
+  if (!quiet || state !== homeClassesState) {
+    renderHomeClasses(d);
+    homeClassesState = state;
+  }
+  const hs = $('homeSchedules');
+  hs.innerHTML = '';
+  if (!d.upcomingSchedules.length && !d.pausedSchedules.length) hs.append(emptyState('暂无定时提醒', '进入班级后可在「定时提醒」里创建每天固定时间的点人。'));
+  for (const s of d.pausedSchedules) hs.append(miniSchedule(s, true));
+  for (const s of d.upcomingSchedules) hs.append(miniSchedule(s, false));
+}
+
+function renderHomeClasses(d) {
+  const mine = new Set(d.classes.map((c) => c.id));
+  const pending = new Set(d.requests.filter((r) => r.status === 'pending').map((r) => r.classId));
+  const unowned = d.availableClasses.filter((c) => !mine.has(c.id));
+  const requestable = unowned.filter((c) => !pending.has(c.id));
+  $('requestPanel').hidden = me.role === 'admin' || !unowned.length;
+  $('homeIntro').textContent = $('requestPanel').hidden
+    ? '进入班级开始点人。'
+    : '进入班级开始点人。想管理新的班级，先提交申请，管理员批准后立即生效。';
+
   const box = $('myClasses');
   box.innerHTML = '';
   if (!d.classes.length) {
-    box.append(me.role === 'admin'
-      ? emptyState('还没有任何班级', '请先在管理端新增班级并录入名单。', { label: '打开管理端', fn: () => { location.href = '/admin'; } })
-      : emptyState('还没有获批的班级', '在下方选择班级提交申请，管理员批准后这里会出现「进入班级」。', { label: '去申请', fn: () => $('requestClass').focus() }));
+    if (me.role === 'admin') {
+      box.append(emptyState('还没有任何班级', '请先在管理端新增班级并录入名单。', { label: '打开管理端', fn: () => { location.href = '/admin'; } }));
+    } else if (!unowned.length) {
+      box.append(emptyState('还没有任何班级', '请等待管理员新增班级，之后可在这里申请管理。'));
+    } else if (!requestable.length) {
+      box.append(emptyState('还没有获批的班级', '班级申请正在等待管理员审批，可在下方查看或撤回。'));
+    } else {
+      box.append(emptyState('还没有获批的班级', '在下方选择班级提交申请，管理员批准后这里会出现「进入班级」。', { label: '去申请', fn: () => $('requestClass').focus() }));
+    }
   }
   for (const c of d.classes) {
     const item = el('div', 'item');
@@ -229,17 +270,16 @@ async function loadHome() {
   }
 
   const select = $('requestClass');
-  const mine = new Set(d.classes.map((c) => c.id));
-  const pending = new Set(d.requests.filter((r) => r.status === 'pending').map((r) => r.classId));
-  select.innerHTML = '<option value="">选择班级</option>';
-  let options = 0;
-  for (const c of d.availableClasses) {
-    if (mine.has(c.id) || pending.has(c.id)) continue;
+  const selected = select.value;
+  const placeholder = el('option', '', requestable.length ? '选择班级' : '没有可以申请的班级');
+  placeholder.value = '';
+  select.replaceChildren(placeholder);
+  for (const c of requestable) {
     const o = el('option', '', `${c.name}（${c.code}）`); o.value = c.id; select.append(o);
-    options += 1;
   }
-  select.disabled = options === 0;
-  if (!options) select.firstElementChild.textContent = '没有可以申请的班级';
+  select.value = requestable.some((c) => c.id === selected) ? selected : '';
+  select.disabled = requestable.length === 0;
+  $('requestBtn').disabled = select.disabled;
 
   const rq = $('myRequests');
   rq.innerHTML = '';
@@ -270,13 +310,15 @@ async function loadHome() {
     item.append(lead, copy, acts);
     rq.append(item);
   }
-
-  const hs = $('homeSchedules');
-  hs.innerHTML = '';
-  if (!d.upcomingSchedules.length && !d.pausedSchedules.length) hs.append(emptyState('暂无定时提醒', '进入班级后可在「定时提醒」里创建每天固定时间的点人。'));
-  for (const s of d.pausedSchedules) hs.append(miniSchedule(s, true));
-  for (const s of d.upcomingSchedules) hs.append(miniSchedule(s, false));
 }
+
+async function pollHome() {
+  if (!me || document.hidden || $('app').hidden || $('home').hidden || homeLoading || $('requestBtn').dataset.loading) return;
+  await loadHome({ quiet: true });
+}
+setInterval(pollHome, 15000);
+document.addEventListener('visibilitychange', pollHome);
+window.addEventListener('focus', pollHome);
 
 function miniSchedule(s, paused) {
   const item = el('div', 'item');

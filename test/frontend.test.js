@@ -32,7 +32,7 @@ test('教师端：个人账号登录 / 注册，不再有共享班级密码；�
 });
 
 test('教师端：个人工作台（已授权班级、申请、被拒理由、即将执行的定时提醒）', () => {
-  for (const id of ['myClasses', 'requestForm', 'myRequests', 'homeSchedules', 'homeWindow']) {
+  for (const id of ['myClasses', 'requestPanel', 'requestForm', 'myRequests', 'homeSchedules', 'homeWindow']) {
     assert.ok(teacherHtml.includes(`id="${id}"`), `缺少 #${id}`);
   }
   assert.ok(teacherJs.includes("'/api/me/classes'") && teacherJs.includes("'/api/me/class-requests'"));

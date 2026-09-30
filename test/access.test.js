@@ -57,6 +57,31 @@ t('申请 → 管理员批准 → 权限立即生效；拒绝会带理由返回�
   } finally { await s.stop(); }
 });
 
+t('已获全部班级授权的教师仍需申请新增班级，管理员自动拥有新增班级权限', async () => {
+  const s = await start();
+  try {
+    const { client, user, admin } = await teacherWithAccess(s.base, [A, B]);
+    const before = (await client.get('/api/me/classes')).json;
+    assert.deepStrictEqual(before.classes.map((c) => c.id).sort(), before.availableClasses.map((c) => c.id).sort());
+    assert.strictEqual((await admin.post('/api/admin/classes', { id: 'class-c', name: '丙班', code: '03' })).status, 200);
+    const after = (await client.get('/api/me/classes')).json;
+    assert.deepStrictEqual(after.classes.map((c) => c.id).sort(), [A, B]);
+    assert.ok(after.availableClasses.some((c) => c.id === 'class-c'));
+    assert.strictEqual((await client.cget('class-c', 'workspace')).status, 403);
+    const adminHome = (await admin.get('/api/me/classes')).json;
+    assert.deepStrictEqual(adminHome.classes.map((c) => c.id).sort(), adminHome.availableClasses.map((c) => c.id).sort());
+    const request = await client.post('/api/me/class-requests', { classId: 'class-c', reason: '新班教师' });
+    assert.strictEqual(request.status, 200);
+    assert.strictEqual((await admin.post(`/api/admin/requests/${request.json.request.id}/approve`, {})).status, 200);
+    const approved = (await client.get('/api/me/classes')).json;
+    assert.deepStrictEqual(approved.classes.map((c) => c.id).sort(), approved.availableClasses.map((c) => c.id).sort());
+    assert.strictEqual((await admin.post('/api/admin/memberships/revoke', { userId: user.id, classId: 'class-c' })).status, 200);
+    assert.strictEqual((await admin.patch('/api/admin/classes/class-c', { status: 'archived' })).status, 200);
+    const archived = (await client.get('/api/me/classes')).json;
+    assert.deepStrictEqual(archived.classes.map((c) => c.id).sort(), archived.availableClasses.map((c) => c.id).sort());
+  } finally { await s.stop(); }
+});
+
 t('教师可以撤回自己的待审申请；已有权限时再申请被拒', async () => {
   const s = await start();
   try {

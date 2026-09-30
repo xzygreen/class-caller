@@ -7,10 +7,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 // 用最小 DOM 驱动真实页面脚本，精确控制请求完成顺序；布局另由浏览器回归检查。
-function node(tag = 'div') {
+function node(tag = 'div', className = '', text = '') {
   const n = {
     tagName: typeof tag === 'string' ? tag.toUpperCase() : 'DIV', value: '', hidden: false, disabled: false, dataset: {}, children: [],
-    style: { setProperty() {} }, textContent: '', clickCount: 0,
+    style: { setProperty() {} }, textContent: text, clickCount: 0,
     classList: { add() {}, remove() {}, toggle() {} },
     append(...xs) { this.children.push(...xs); }, replaceChildren(...xs) { this.children = xs; },
     setAttribute() {}, toggleAttribute() {}, querySelector() { return node(); },
@@ -23,7 +23,7 @@ function node(tag = 'div') {
   return n;
 }
 function page(file = 'teacher.js') {
-  const nodes = new Map(), listeners = {}, timers = [];
+  const nodes = new Map(), listeners = {}, timers = [], intervals = [];
   const get = (id) => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); };
   const document = {
     getElementById: get, addEventListener(type, fn) { listeners[type] = fn; },
@@ -32,15 +32,15 @@ function page(file = 'teacher.js') {
   const context = vm.createContext({
     document, window: { addEventListener() {} }, location: { href: 'http://localhost/teacher', pathname: '/teacher', search: '', hash: '' },
     history: { replaceState() {} }, URL, URLSearchParams, console,
-    setInterval() {}, clearInterval() {}, setTimeout(fn) { timers.push(fn); }, clearTimeout() {},
+    setInterval(fn, ms) { intervals.push({ fn, ms }); }, clearInterval() {}, setTimeout(fn) { timers.push(fn); }, clearTimeout() {},
     fetch: () => new Promise(() => {}), hydrateIcons() {}, wireMenu() {}, wireTabs() {}, markTabs() {},
     el: node, icon: node, fill(box, ...xs) { box.replaceChildren(...xs); }, skeleton: node,
-    emptyState: () => node(), errorState: () => node(), toast() {}, setBusy(n, on) { n.disabled = on; },
+    emptyState: (title, text, action) => Object.assign(node(), { title, text, action }), errorState: () => node(), toast() {}, setBusy(n, on) { n.disabled = on; },
     initial() { return ''; }, signalTrack: node, hhmm() {}, dateTime() {},
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8'), context);
   const run = (code) => vm.runInContext(code, context);
-  return { context, get, listeners, timers, run };
+  return { context, get, listeners, timers, intervals, run };
 }
 function teacher() {
   const p = page(), requests = [];
@@ -60,6 +60,118 @@ function teacher() {
   };
   return { ...p, requests, workspace, enter };
 }
+
+function home(role = 'teacher') {
+  const p = page(), requests = [];
+  p.context.requests = requests;
+  p.context.role = role;
+  p.run(`me = { role, displayName: '老师' };
+    api = (method, path) => new Promise(resolve => requests.push({ method, path, resolve }));
+    renderWindowPill = () => {}; windowSummary = () => document.createElement('div');`);
+  const data = (mine = ['a'], available = ['a'], requests = []) => ({ ok: true, json: {
+    classes: mine.map((id) => ({ id, name: id, code: id, studentCount: 3 })),
+    availableClasses: available.map((id) => ({ id, name: id, code: id })),
+    requests, upcomingSchedules: [], pausedSchedules: [], callWindow: null,
+  } });
+  const refresh = async (response = data(), quiet = false) => {
+    const done = p.run(`loadHome({ quiet: ${quiet} })`);
+    requests.at(-1).resolve(response);
+    await done;
+  };
+  return { ...p, requests, data, refresh };
+}
+
+test('管理员和已授权全部现有班级的教师隐藏整块申请区域，历史申请不影响判断', async () => {
+  for (const role of ['admin', 'teacher']) {
+    const p = home(role);
+    const history = [{ id: 'r1', classId: 'a', className: '甲班', status: 'approved' }];
+    await p.refresh(p.data(['a'], ['a'], history));
+    assert.equal(p.get('requestPanel').hidden, true);
+    assert.equal(p.get('homeIntro').textContent, '进入班级开始点人。');
+    if (role === 'admin') {
+      await p.refresh(p.data(['a'], ['a', 'b']), true);
+      assert.equal(p.get('requestPanel').hidden, true, '管理员始终无需申请');
+    }
+  }
+});
+
+test('新增班级或撤权时申请区域重新出现，再次全部授权或归档未授权班级时隐藏', async () => {
+  const p = home();
+  await p.refresh();
+  assert.equal(p.get('requestPanel').hidden, true);
+  await p.refresh(p.data(['a'], ['a', 'b']), true);
+  assert.equal(p.get('requestPanel').hidden, false);
+  assert.deepEqual(p.get('requestClass').children.map((n) => n.value), ['', 'b']);
+  await p.refresh(p.data(['a', 'b'], ['a', 'b']), true);
+  assert.equal(p.get('requestPanel').hidden, true);
+  await p.refresh(p.data(['a'], ['a', 'b']), true);
+  assert.equal(p.get('requestPanel').hidden, false);
+  await p.refresh(p.data(['a'], ['a']), true);
+  assert.equal(p.get('requestPanel').hidden, true);
+});
+
+test('全部未授权班级待审批时仍显示申请记录与撤回按钮，没有班级时不显示无效申请入口', async () => {
+  const p = home();
+  await p.refresh(p.data([], ['a'], [{ id: 'r1', classId: 'a', className: '甲班', status: 'pending' }]));
+  assert.equal(p.get('requestPanel').hidden, false);
+  assert.equal(p.get('requestClass').disabled, true);
+  assert.equal(p.get('requestBtn').disabled, true);
+  assert.equal(p.get('myRequests').children[0].children[2].children[0].textContent, '撤回申请');
+  assert.equal(p.get('myClasses').children[0].action, undefined);
+  await p.refresh(p.data([], []));
+  assert.equal(p.get('requestPanel').hidden, true);
+  assert.equal(p.get('myClasses').children[0].action, undefined);
+});
+
+test('后台刷新不重建未变化的班级控件，变化时保留仍可申请的选择和说明', async () => {
+  const p = home();
+  await p.refresh(p.data(['a'], ['a', 'b']));
+  const card = p.get('myClasses').children[0];
+  const option = p.get('requestClass').children[1];
+  p.get('requestClass').value = 'b';
+  p.get('requestReason').value = '本班数学教师';
+  await p.refresh(p.data(['a'], ['a', 'b']), true);
+  assert.equal(p.get('myClasses').children[0], card);
+  assert.equal(p.get('requestClass').children[1], option);
+  await p.refresh(p.data(['a'], ['a', 'b', 'c']), true);
+  assert.equal(p.get('requestClass').value, 'b');
+  assert.equal(p.get('requestReason').value, '本班数学教师');
+  await p.refresh({ ok: false, status: 0 }, true);
+  assert.equal(p.get('requestPanel').hidden, false);
+  assert.equal(p.get('requestClass').value, 'b');
+  await p.refresh(p.data(['a', 'b'], ['a', 'b', 'c']), true);
+  assert.equal(p.get('requestClass').value, '', '已授权的选择应移除');
+});
+
+test('首页只接受最新响应，离开首页或退出登录后忽略旧响应', async () => {
+  const p = home();
+  const old = p.run('loadHome()');
+  await p.refresh(p.data(['a'], ['a']));
+  p.requests[0].resolve(p.data(['a'], ['a', 'b'])); await old;
+  assert.equal(p.get('requestPanel').hidden, true);
+  for (const leave of ['workspaceVersion++', 'me = null']) {
+    const done = p.run('loadHome({ quiet: true })');
+    p.run(leave);
+    p.requests.at(-1).resolve(p.data(['a'], ['a', 'b'])); await done;
+    assert.equal(p.get('requestPanel').hidden, true);
+  }
+});
+
+test('首页每 15 秒或返回标签页时刷新，后台、班级页和提交期间不轮询，不重叠请求', async () => {
+  const p = home();
+  assert.ok(p.intervals.some(({ fn, ms }) => fn.name === 'pollHome' && ms === 15000));
+  for (const [object, key, value] of [[p.context.document, 'hidden', true], [p.get('home'), 'hidden', true], [p.get('app'), 'hidden', true], [p.get('requestBtn').dataset, 'loading', '1']]) {
+    object[key] = value;
+    await p.run('pollHome()');
+    assert.equal(p.requests.length, 0);
+    object[key] = false;
+  }
+  const first = p.listeners.visibilitychange();
+  await p.run('pollHome()');
+  assert.equal(p.requests.length, 1);
+  p.requests[0].resolve(p.data()); await first;
+  assert.equal(p.get('requestPanel').hidden, true);
+});
 
 test('班级异步切换只接纳最后一次响应，包括 A → B → A', async () => {
   const p = teacher();
