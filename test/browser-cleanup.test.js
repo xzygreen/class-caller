@@ -142,7 +142,8 @@ test('POSIX wrapper fixture: exited launcher and TERM-resistant profile writer l
     catch (error) { if (error.status !== 1) throw error; }
     assert.ok(!state || state.startsWith('Z'), 'descendant must be gone or reaped-pending zombie, got ' + state);
   } finally {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    clearTimeout(readyTimer);
+    try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
     child.stdout?.destroy(); child.unref();
     await fs.promises.rm(profile, { recursive: true, force: true });
   }
