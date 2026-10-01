@@ -5,7 +5,7 @@
 // production server, or roster files: helpers.start() owns temporary synthetic data.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { findChrome, launch } = require('./browser-cdp-support.cjs');
+const { findChrome, launch, closeBrowserAndServer } = require('./browser-cdp-support.cjs');
 const { start, asAdmin, teacherWithAccess, CLASS_A } = require('./helpers');
 const chrome = findChrome();
 const missing = !chrome ? 'No local Chrome; set CHROME_PATH' : typeof WebSocket !== 'function' ? 'Node >=22 required (native WebSocket)' : false;
@@ -272,7 +272,6 @@ test('F18–F22 real browser DOM, geometry and accessibility regressions', { ski
     });
     assert.deepEqual(browser.errors, [], 'No uncaught page exceptions');
   } finally {
-    if (browser) await browser.close();
-    await s.stop();
+    await closeBrowserAndServer(browser, s);
   }
 });

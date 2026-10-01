@@ -36,7 +36,7 @@ class ControlledResponse extends Writable {
 function connect(hub, { source = 'synthetic-source', role = 'display', slow = false, snapshot = { id: 1, type: 'clear' } } = {}) {
   const req = new EventEmitter();
   req.socket = { remoteAddress: source };
-  const res = new ControlledResponse({ slow });
+  const res = new ControlledResponse({ slow, highWaterMark: slow ? 16 : 64 * 1024 });
   const client = hub.add(req, res, snapshot, role, source);
   return { req, res, client };
 }
