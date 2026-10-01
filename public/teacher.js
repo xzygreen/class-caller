@@ -479,10 +479,12 @@ function switchTab(tab) {
 wireTabs($('tabs'), switchTab);
 
 /* ---------- 名字网格 ---------- */
+let callDraftRevision = 0;
 function toggleName(set, name, rerender) {
   if (set.has(name)) set.delete(name);
   else if (set.size < maxNamesPerCall) set.add(name);
   else { toast('一次最多选择 ' + maxNamesPerCall + ' 人', true); return; }
+  if (set === sel) callDraftRevision++;
   rerender();
 }
 
@@ -524,7 +526,7 @@ function renderGrid() {
   empty.hidden = list.length > 0;
   if (!list.length) {
     fill(empty, students.length
-      ? emptyState('没有找到「' + q + '」', '换个关键词，或清空搜索框查看全班。', { label: '清空搜索', fn: () => { $('search').value = ''; renderGrid(); $('search').focus(); } }, true)
+      ? emptyState('没有找到「' + q + '」', '换个关键词，或清空搜索框查看全班。', { label: '清空搜索', fn: () => { $('search').value = ''; callDraftRevision++; renderGrid(); $('search').focus(); } }, true)
       : emptyState('本班名单还是空的', '请联系管理员在管理端录入学生名单。', null, true));
   }
   const t = '已选择 ' + sel.size + ' / ' + maxNamesPerCall;
@@ -539,7 +541,7 @@ function chips(box, set, placeholder, after) {
     const rm = el('button');
     rm.type = 'button'; rm.setAttribute('aria-label', '取消选择 ' + name);
     rm.append(icon('x'));
-    rm.onclick = () => { set.delete(name); after(); };
+    rm.onclick = () => { set.delete(name); if (set === sel) callDraftRevision++; after(); };
     chip.append(rm); box.append(chip);
   }
 }
@@ -588,10 +590,11 @@ function clearSelection() {
   if (!sel.size) return;
   const context = workspaceVersion;
   const before = [...sel];
-  sel.clear(); renderGrid(); renderPicked();
+  sel.clear(); callDraftRevision++; renderGrid(); renderPicked();
   toast('已清空 ' + before.length + ' 人', { action: { label: '撤销', fn: () => {
     if (context !== workspaceVersion) return;
     for (const name of before) if (students.includes(name) && sel.size < maxNamesPerCall) sel.add(name);
+    callDraftRevision++;
     renderGrid(); renderPicked();
   } } });
 }
@@ -813,8 +816,11 @@ function setSending(v) {
   renderPicked();
 }
 
+function callDraftKey() { return JSON.stringify([[...sel], $('msg').value, $('search').value]); }
+$('msg').oninput = () => { callDraftRevision++; };
 $('send').onclick = async () => {
   const context = workspaceVersion;
+  const revision = callDraftRevision, draftKey = callDraftKey();
   const names = [...sel];
   if (!names.length || sending) return;
   const message = $('msg').value.trim();
@@ -833,13 +839,15 @@ $('send').onclick = async () => {
     }
     lastSent = { noticeId: res.json.notice.id, names, message, sentAt: Date.now(), acks: new Map(), seen: false, queued: false, withdrawn: false };
     display = res.json.display;
-    sel.clear(); $('msg').value = ''; $('search').value = '';
+    const draftUnchanged = revision === callDraftRevision && draftKey === callDraftKey();
+    if (draftUnchanged) { sel.clear(); $('msg').value = ''; $('search').value = ''; callDraftRevision++; }
     renderGrid();
     renderNow(); renderLive(res.json);
     const b = $('send');
     b.dataset.state = 'success';
     setTimeout(() => { delete b.dataset.state; }, 1400);
-    toast(res.json.displayedNow ? '已通知到' + klass.className + '大屏' : '已加入等待队列，当前内容结束后显示', !res.json.displays);
+    const sentText = res.json.displayedNow ? '已通知到' + klass.className + '大屏' : '已加入等待队列，当前内容结束后显示';
+    toast(sentText + (draftUnchanged ? '' : '。发送期间编辑的草稿已保留，尚未发送。'), !res.json.displays);
   } finally { if (context === workspaceVersion) setSending(false); }
 };
 
@@ -887,17 +895,17 @@ async function resend(noticeId, quiet) {
   if (quiet !== false || res.json.alreadyQueued) toast(res.json.alreadyQueued ? '这条内容已在大屏或队列中' : '已再次发送');
 }
 
-$('search').oninput = renderGrid;
+$('search').oninput = () => { callDraftRevision++; renderGrid(); };
 $('search').onkeydown = (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
   const first = filtered($('search').value.trim())[0];
   if (!first || !$('search').value.trim()) return;
-  toggleName(sel, first, () => { $('search').value = ''; renderGrid(); renderPicked(); });
+  toggleName(sel, first, () => { $('search').value = ''; callDraftRevision++; renderGrid(); renderPicked(); });
 };
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && currentTab === 'call' && !document.querySelector('dialog[open]')) {
-    if (!$('sheet').hidden) { closeSheet(); $('pickedBtn').focus(); } else if ($('search').value) { $('search').value = ''; renderGrid(); }
+    if (!$('sheet').hidden) { closeSheet(); $('pickedBtn').focus(); } else if ($('search').value) { $('search').value = ''; callDraftRevision++; renderGrid(); }
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && currentTab === 'call' && !$('app').hidden && !$('klassView').hidden && !document.querySelector('dialog[open]')) {
     e.preventDefault();
@@ -912,6 +920,8 @@ function renderPreview() {
   $('pvKind').textContent = urgent ? '紧急通知' : '班级留言';
   $('pvTitle').textContent = $('annTitle').value.trim() || '班级通知';
   $('pvBody').textContent = $('annBody').value.trim() || '正文内容会显示在这里';
+  $('pvFullTitle').textContent = $('annTitle').value.trim();
+  $('pvFullBody').textContent = $('annBody').value.trim() || '尚未填写正文';
   $('pvAuthor').textContent = '—— ' + callerLabel();
   $('pvClock').textContent = hhmm(Date.now());
 }

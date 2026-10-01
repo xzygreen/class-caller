@@ -337,7 +337,7 @@ function newClass() {
         id, name: f.elements.name.value.trim(), code: f.elements.code.value.trim() || undefined, color: f.elements.color.value,
         autoClearSeconds: Number(f.elements.autoClearSeconds.value), students: [],
       });
-      if (!res.ok) { toast(errText(res, '新增失败'), true); return false; }
+      if (!res.ok) return { error: errText(res, '新增失败'), fields: res.json && res.json.error === 'CLASS_ID_TAKEN' ? ['id'] : [] };
       toast('已新建班级，请录入名单');
       created = id;
       return true;
@@ -483,7 +483,7 @@ function editClass(c) {
     title: '编辑 ' + c.name, body,
     onSubmit: async (f) => {
       const x = await api('PATCH', `/api/admin/classes/${c.id}`, { name: f.elements.name.value.trim(), code: f.elements.code.value.trim(), color: f.elements.color.value, autoClearSeconds: Number(f.elements.autoClearSeconds.value), launcher: { mode: f.elements.mode.value, freshSeconds: c.launcher.freshSeconds } });
-      if (!x.ok) { toast(errText(x, '保存失败'), true); return false; }
+      if (!x.ok) return { error: errText(x, '保存失败') };
       toast('已保存'); loadClasses();
       return true;
     },
@@ -507,7 +507,7 @@ function newUser() {
     onSubmit: async (f) => {
       const e = f.elements;
       const res = await api('POST', '/api/admin/users', { username: e.username.value.trim(), displayName: e.displayName.value.trim(), title: e.title.value.trim(), password: e.password.value, role: e.role.value });
-      if (!res.ok) { toast(errText(res, '创建失败'), true); return false; }
+      if (!res.ok) return { error: errText(res, '创建失败'), fields: res.json && res.json.error === 'USERNAME_TAKEN' ? ['username'] : [] };
       toast('已创建账号，请把初始密码告知本人；首次登录必须修改');
       loadUsers();
       return true;
@@ -685,7 +685,7 @@ function editUser(u) {
     title: '编辑 ' + u.username, body,
     onSubmit: async (f) => {
       const r = await api('PATCH', `/api/admin/users/${u.id}`, { displayName: f.elements.displayName.value.trim(), title: f.elements.title.value.trim() });
-      if (!r.ok) { toast(errText(r, '保存失败'), true); return false; }
+      if (!r.ok) return { error: errText(r, '保存失败') };
       toast('已保存'); loadUsers();
       return true;
     },
@@ -715,6 +715,9 @@ function renderWindows() {
     tb.append(tr);
   });
 }
+$('wDays').onchange = () => {
+  if (windowsDraft) windowsDraft.weekdays = [...$('wDays').querySelectorAll('input:checked')].map((i) => Number(i.value));
+};
 $('wAdd').onclick = () => { windowsDraft.windows.push({ start: '12:00', end: '12:10', label: '' }); renderWindows(); };
 $('wDefault').onclick = () => {
   windowsDraft.weekdays = [1, 2, 3, 4, 5];
@@ -723,7 +726,6 @@ $('wDefault').onclick = () => {
   toast('已填入默认作息，点「保存作息」后生效');
 };
 $('wSave').onclick = async () => {
-  windowsDraft.weekdays = [...$('wDays').querySelectorAll('input:checked')].map((i) => Number(i.value));
   const ok = await confirmDialog({
     title: '保存全校作息？', icon: 'clock', confirm: '保存并生效',
     impact: [

@@ -7,7 +7,7 @@
  *   ADMIN_USERNAME=admin ADMIN_PASSWORD='强密码' npm run init-admin
  *   或交互式：npm run init-admin
  *
- * 密码只读取一次，不写入任何文件或日志。服务运行中也可以执行（数据仓库串行写入）。
+ * 密码只读取一次，不写入任何文件或日志。必须先停止服务；活动单写者锁会拒绝本工具。
  */
 const path = require('path');
 const readline = require('readline');
@@ -32,25 +32,32 @@ function ask(question, { hidden = false } = {}) {
 }
 
 (async () => {
-  const username = process.env.ADMIN_USERNAME || await ask('管理员登录名：');
-  const displayName = process.env.ADMIN_NAME || await ask('显示姓名（默认「管理员」）：') || '管理员';
-  const password = process.env.ADMIN_PASSWORD || await ask('密码（至少 8 位）：', { hidden: true });
+  // 先取得生命周期锁再询问密码，避免输入后才发现服务仍在写入。
+  const initialAdmin = {};
   const app = createApp({
     dataFile: path.join(DATA_DIR, 'db.json'),
     publicDir: path.join(__dirname, '..', 'public'),
     legacyConfig: process.env.LEGACY_CONFIG || path.join(__dirname, '..', 'students.json'),
-    initialAdmin: { username, password, displayName },
+    initialAdmin,
     scheduler: false,
   });
-  if (app.users.hasAdmin()) {
-    console.error('已经存在启用的管理员；后续管理员请由现有管理员在管理端创建。');
-    process.exit(2);
+  let created = false;
+  try {
+    if (app.users.hasAdmin()) {
+      console.error('已经存在启用的管理员；后续管理员请由现有管理员在管理端创建。');
+      process.exitCode = 2;
+      return;
+    }
+    initialAdmin.username = process.env.ADMIN_USERNAME || await ask('管理员登录名：');
+    initialAdmin.displayName = process.env.ADMIN_NAME || await ask('显示姓名（默认「管理员」）：') || '管理员';
+    initialAdmin.password = process.env.ADMIN_PASSWORD || await ask('密码（至少 8 位）：', { hidden: true });
+    await app.bootstrap();
+    created = true;
+  } finally {
+    await app.close();
   }
-  await app.bootstrap();
-  await app.store.flush();
-  console.log(`已创建管理员 ${username.toLowerCase()}，数据文件：${path.join(DATA_DIR, 'db.json')}`);
-  process.exit(0);
+  if (created) console.log(`已创建管理员 ${initialAdmin.username.toLowerCase()}，数据文件：${path.join(DATA_DIR, 'db.json')}`);
 })().catch((err) => {
   console.error(err.message || err);
-  process.exit(1);
+  process.exitCode = 1;
 });

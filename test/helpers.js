@@ -53,25 +53,45 @@ async function start({ classes = [CLASS_A, CLASS_B], at = OPEN_TIME, admin = ADM
   if (seedClasses) fs.writeFileSync(legacy, JSON.stringify({ version: 2, classes: classes.map((c) => ({ ...c, password: 'legacy-' + c.id })) }));
   const clk = makeClock(at);
   clock.use(clk.now);
-  const app = createApp({
+  let app;
+  let handle;
+  async function open() {
+    app = createApp({
+      dataFile: path.join(dir, 'data', 'db.json'),
+      publicDir: path.join(__dirname, '..', 'public'),
+      legacyConfig: seedClasses ? legacy : null,
+      initialAdmin: admin,
+      scheduler: false,
+    });
+    try {
+      await app.bootstrap();
+      await new Promise((resolve, reject) => {
+        app.server.once('error', reject);
+        app.server.listen(0, '127.0.0.1', () => { app.server.removeListener('error', reject); resolve(); });
+      });
+    } catch (err) {
+      await app.close();
+      throw err;
+    }
+    const port = app.server.address().port;
+    Object.assign(handle, { app, port, base: `http://127.0.0.1:${port}` });
+  }
+  handle = {
+    dir, clock: clk, classes,
     dataFile: path.join(dir, 'data', 'db.json'),
-    publicDir: path.join(__dirname, '..', 'public'),
-    legacyConfig: seedClasses ? legacy : null,
-    initialAdmin: admin,
-    scheduler: false,
-  });
-  await app.bootstrap();
-  await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
-  const port = app.server.address().port;
-  const base = `http://127.0.0.1:${port}`;
-  return {
-    app, port, base, dir, clock: clk, classes,
-    dataFile: path.join(dir, 'data', 'db.json'),
+    async restart() {
+      await app.close(); // flush() alone deliberately does not release the writer lock.
+      await open();
+      return handle;
+    },
     async stop() {
       await app.close();
       fs.rmSync(dir, { recursive: true, force: true });
     },
   };
+  try { await open(); }
+  catch (err) { fs.rmSync(dir, { recursive: true, force: true }); throw err; }
+  return handle;
 }
 
 function req(base, method, urlPath, { body, cookie, raw, headers = {} } = {}) {

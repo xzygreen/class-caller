@@ -1,6 +1,6 @@
 # 从「班级共享密码」升级到「个人账号 + 班级授权」
 
-适用于已经用 `deploy.sh` 部署在 `/opt/class-caller`、由 systemd 服务 `class-caller` 运行、Nginx 反代的服务器。升级过程中旧服务一直在跑，直到 `deploy.sh` 重启服务；大屏（浏览器和 `display.exe`）使用的公开接口保持不变，不会突然不可用。
+适用于已经用 `deploy.sh` 部署在 `/opt/class-caller`、由 systemd 服务 `class-caller` 运行、Nginx 反代的服务器。**安排维护窗口，不承诺无中断升级。** 数据备份、管理员初始化和人工恢复必须停服；公开大屏 URL 延续不代表所有旧客户端支持新增的留言/协议字段，按后面的验收清单验证。
 
 ## 这次升级改变了什么
 
@@ -17,25 +17,51 @@
 
 ## 0. 本机准备
 
+从经过测试的提交制作只含 Git 跟踪源码的包，不要把本机数据、`.claude/`、日志或真实 `students.json` 同步到服务器；不要用 `rsync --delete` 对线上代码/数据目录盲目镜像。
+
 ```bash
 npm test
-rsync -av --delete --exclude node_modules --exclude .DS_Store --exclude data \
-  ./ 用户名@服务器地址:~/class-caller/
+git archive --format=tar.gz --output=/tmp/class-caller-source.tar.gz HEAD
+scp /tmp/class-caller-source.tar.gz 用户名@服务器地址:~/
 ```
+
+在服务器解压到一个新的空目录作为后续的 `~/class-caller`（若已存在，另选名字），避免混入旧测试或编译产物。记录所用提交；未提交的本地改动不会进入 `git archive HEAD`。
 
 ## 1. 服务器上留一份可回退的现场
 
+确认 Nginx 站点文件的实际路径，下例使用 `/etc/nginx/sites-available/class-caller`。在同一个服务器终端中执行并记下输出的快照路径：
+
 ```bash
 ssh 用户名@服务器地址
-sudo cp -a /opt/class-caller /opt/class-caller.pre-accounts
+sudo systemctl stop class-caller
+snapshot="/root/class-caller-pre-accounts-$(date -u +%Y%m%dT%H%M%SZ)"
+sudo install -d -m 0700 "$snapshot"
+sudo cp -a /opt/class-caller "$snapshot/app"
+sudo cp -a /etc/systemd/system/class-caller.service "$snapshot/class-caller.service"
+sudo cp -a /etc/nginx/sites-available/class-caller "$snapshot/nginx-site"
+if sudo test -d /var/lib/class-caller; then
+  sudo cp -a /var/lib/class-caller "$snapshot/data"
+fi
+printf '保留此快照路径：%s\n' "$snapshot"
 ```
+
+任一复制失败都先处理，不继续部署；不要恢复快照中的旧锁文件。现场可能包含旧明文班级密码、姓名、会话及日志，必须受限保存并单独设定到期日。
 
 ## 2. 更新 Nginx
 
-新版本多了教师端实时流 `/api/classes/<班级>/stream`（需要登录 Cookie），并且依赖 `X-Forwarded-Proto` 给 Cookie 加 `Secure`。把站点文件里的 SSE `location` 改成：
+新版本多了教师端实时流 `/api/classes/<班级>/stream`（需要登录 Cookie），并且依赖 `X-Forwarded-Proto` 给 Cookie 加 `Secure`。优先使用完整的当前 [`nginx.conf.example`](../nginx.conf.example)。下面的 `limit_conn_zone` 必须放在 `http` 上下文、`server` 块之外，`location` 放在对应站点 `server` 内；同名 zone 只声明一次。共享出口 IP 的学校应按规模评估限额，不能只把连接数无限调大。
 
 ```nginx
+# http 上下文
+limit_conn_zone $binary_remote_addr zone=caller_stream_ip:10m;
+limit_conn_zone $server_name zone=caller_stream_server:1m;
+
+# 对应站点的 server 上下文
 location ~ ^/api/classes/[a-z0-9-]+/(public/)?stream$ {
+    limit_conn caller_stream_ip 64;
+    limit_conn caller_stream_server 1024;
+    limit_conn_status 429;
+    send_timeout 30s;
     auth_basic off;
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -78,20 +104,23 @@ cd ~/class-caller && sudo bash deploy.sh
 3. 安装代码到 `/opt/class-caller`（只读），数据目录 `/var/lib/class-caller`（属主 `classcaller`，0700）；
 4. 注册新的 systemd unit（含 `StateDirectory=class-caller`）并重启。
 
-首次以新版本启动时，服务会读取 `/opt/class-caller/students.json` 把班级与名单导入数据仓库，`password` 字段被丢弃，并写入一条 `class.import_legacy` 审计。导入只发生在数据仓库里还没有任何班级时；之后 `students.json` 不再被读取，可以删除。
+首次以新版本启动时，服务会读取 `/opt/class-caller/students.json` 把班级与名单导入数据仓库，`password` 字段被丢弃，并写入一条 `class.import_legacy` 审计。导入只发生在数据仓库里还没有任何班级时；之后日常修改以 `db.json` 为准。核对班级/名单数量和一份受限备份后，按学校留存策略移走或删除旧导入文件及副本，避免原文件里的旧密码一直留在服务器。不要删除主库来“重新导入”，那会丢失账号、权限和历史。
 
 ## 4. 创建首个管理员
 
-首个管理员不能使用公开默认密码。二选一：
+首个管理员不能使用公开默认密码。**部署脚本若已启动服务，也必须再次停止后运行离线初始化。** 只在初始化成功后启动；不要运行中另起维护进程，也不要删活动锁绕过检查。
 
 ```bash
 # 交互式（推荐）：密码不会出现在命令历史或日志里
-cd /opt/class-caller && sudo -u classcaller DATA_DIR=/var/lib/class-caller node scripts/init-admin.js
+sudo systemctl stop class-caller && \
+  sudo -u classcaller env DATA_DIR=/var/lib/class-caller \
+    node /opt/class-caller/scripts/init-admin.js && \
+  sudo systemctl start class-caller
 ```
 
-或在 `/etc/systemd/system/class-caller.service` 里临时加上 `Environment=ADMIN_USERNAME=...` 与 `Environment=ADMIN_PASSWORD=...`，`daemon-reload` 并重启一次；创建成功后**删掉这两行**再 `daemon-reload`。这两个变量只在数据仓库里没有管理员时被读取一次。
+已有可用管理员时，通过管理端增加账号，不必再次初始化。也可在受限的 systemd 配置中临时设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，由**唯一服务进程启动时**创建首个管理员；确认后删除变量并 `daemon-reload`，不要把密码写入公开 unit、命令历史或仓库。这不是在线 CLI 初始化方式。
 
-打开 `https://你的域名/admin` 登录确认。
+打开 `https://你的域名/admin` 登录，核对 `/api/public/status` 的 `setupRequired` 为 `false`，再注册一个合成测试教师并确认管理员仍存在。
 
 ## 5. 让教师迁移
 
@@ -108,7 +137,7 @@ cd /opt/class-caller && sudo -u classcaller DATA_DIR=/var/lib/class-caller node 
 
 ## 7. 更新大屏程序（可选，但推荐）
 
-旧版 `display.exe` 继续可用：它只认 `call` 与 `clear` 两种快照，收到留言快照会当作清屏，不会显示错误内容。要在原生大屏上显示班级留言，请从 [Releases](https://github.com/xzygreen/class-caller/releases/latest) 下载新版 exe 替换 `D:\class-caller\display.exe`，`display.ini` 不需要改。
+不要假定任意旧版 `display.exe` / 启动器支持当前所有快照字段。按 [Windows 大屏指南](windows-display.md) 与 [启动器指南](windows-launcher.md) 更新，并核对 Release 的 `release-manifest.json`、源码提交和 `.sha256`；保留原设备配置，不从公开包获取真实服务地址。用合成点人、留言、清屏和收到确认做端到端验收，原生启动器还需验证目标程序确实被唤起。解析器测试或交叉编译不能替代目标 Windows 设备验证。
 
 ## 8. 验收清单
 
@@ -118,15 +147,35 @@ cd /opt/class-caller && sudo -u classcaller DATA_DIR=/var/lib/class-caller node 
 - 08:45 可以点人，09:00 提示「当前正在上课，暂不能点人」并给出下次时间；周末不能点人；
 - 留言不需要选学生，大屏留言版式没有「收到」按钮；
 - 修改作息后不合法的定时任务出现在管理端「暂停的定时任务」里，原因为「作息已修改」；
-- 管理端「操作记录」里每条都有操作者与时间。
+- 管理端「操作记录」里每条都有操作者与时间；
+- 合成账号在改密/停用/撤权后不能用旧身份继续写入，未来公告不应绕过撤权或「下一课间」策略；
+- 作息勾选星期后增删时段，保存并刷新仍保持；长留言完整可读，模态表单失败时在框内保留错误和输入；
+- 服务重启后名单、账号、通知与审计仍存在；只当前显示/确认状态属于内存，不用重启清除历史；
+- 在隔离数据目录演练备份恢复，核对隐私清理范围与备份仍含旧数据的边界，见 [隐私政策](../PRIVACY.md)。
 
 ## 回退
 
+先决定回退的是**代码**还是**代码和数据的同一时间点**。旧代码可能不理解新主库；恢复旧数据会丢掉快照之后的更改、恢复被删除的信息或被撤销的账号权限。先在隔离副本验证，记录并重放期间的删除/停用/撤权决定，再恢复对外访问。
+
+以下是代码与配置回退示例，`snapshot` 必须替换为第 1 步实际保存的目录。保留失败现场，不直接 `rm -rf` 唯一代码/数据：
+
 ```bash
-sudo systemctl stop class-caller
-sudo rm -rf /opt/class-caller && sudo mv /opt/class-caller.pre-accounts /opt/class-caller
-sudo cp /opt/class-caller.pre-accounts/../class-caller.service.bak /etc/systemd/system/class-caller.service 2>/dev/null || true
-sudo systemctl daemon-reload && sudo systemctl start class-caller
+snapshot='/root/class-caller-pre-accounts-替换为实际时间'
+sudo test -d "$snapshot/app" && \
+  sudo test -f "$snapshot/class-caller.service" && \
+  sudo test -f "$snapshot/nginx-site" && \
+  sudo systemctl stop class-caller && \
+  sudo mv /opt/class-caller "/opt/class-caller.failed-$(date -u +%Y%m%dT%H%M%SZ)" && \
+  sudo cp -a "$snapshot/app" /opt/class-caller && \
+  sudo cp -a "$snapshot/class-caller.service" /etc/systemd/system/class-caller.service && \
+  sudo cp -a "$snapshot/nginx-site" /etc/nginx/sites-available/class-caller
 ```
 
-回退后需把 Nginx 的 `teacher/` location 加回来。数据目录 `/var/lib/class-caller` 保留不动，再次升级时直接复用。
+仅在确认上述命令成功、代码兼容当前主库或已按 [README 恢复步骤](../README.md#备份与恢复)完成数据恢复后，才执行：
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx && \
+  sudo systemctl daemon-reload && sudo systemctl start class-caller
+```
+
+核对本地健康接口、管理员登录、班级名单和一条合成通知；回退到共享密码旧版还会恢复其旧鉴权模型，不能继续声称具有新版个人账号权限保护。快照和失败现场不受自动备份轮转控制，按批准的留存期限管理。

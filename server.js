@@ -20,6 +20,7 @@ const app = createApp({
 });
 
 app.bootstrap().then(() => {
+  if (shuttingDown) return;
   app.server.listen(PORT, HOST, () => {
     const db = app.store.get();
     log('server_start', {
@@ -31,7 +32,7 @@ app.bootstrap().then(() => {
   });
 }).catch((err) => {
   log('bootstrap_failed', { detail: String(err && err.stack || err) });
-  process.exit(1);
+  shutdown('BOOTSTRAP_FAILED', 1);
 });
 
 let shuttingDown = false;

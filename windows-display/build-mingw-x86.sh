@@ -8,7 +8,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 CC="${CC:-i686-w64-mingw32-gcc}"
 OBJDUMP="${OBJDUMP:-${CC%-gcc}-objdump}"
 WINDRES="${WINDRES:-${CC%-gcc}-windres}"
+command -v "$OBJDUMP" >/dev/null || { printf 'Required PE inspector not found: %s\n' "$OBJDUMP" >&2; exit 1; }
 mkdir -p "$ROOT/build"
+rm -f "$ROOT/build/display.exe"
 (
   cd "$ROOT/src"
   "$WINDRES" --input display.rc --output "$ROOT/build/display-res.o" --output-format coff --target pe-i386
@@ -27,18 +29,18 @@ fi
 "$CC" -std=c11 -O2 -Wall -Wextra -municode -mwindows -static $CRT_FLAGS \
   -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 \
   -Wl,--subsystem,windows:6.01 \
-  -o "$ROOT/build/display.exe" "$ROOT/src/display.c" "$ROOT/build/display-res.o" \
+  -o "$ROOT/build/display-unchecked.exe" "$ROOT/src/display.c" "$ROOT/build/display-res.o" \
   -lwinhttp -lgdi32 -lmsimg32 -luser32 -lshell32 -ladvapi32
 
-file "$ROOT/build/display.exe" || true
-if command -v "$OBJDUMP" >/dev/null 2>&1; then
-  "$OBJDUMP" -f "$ROOT/build/display.exe" | grep -E 'file format|architecture'
-  DLLS="$("$OBJDUMP" -p "$ROOT/build/display.exe" | awk '/DLL Name:/{print $3}')"
-  echo "imports: $(echo "$DLLS" | tr '\n' ' ')"
-  if echo "$DLLS" | grep -qiE '^(ucrtbase\.dll|api-ms-win-crt-)'; then
-    echo "ERROR: display.exe depends on the Universal CRT and will not start on a stock Windows 7 SP1." >&2
-    echo "       Use a msvcrt-default MinGW-w64 (Debian gcc-mingw-w64-i686) or GCC >= 15 (-mcrtdll=msvcrt-os)." >&2
-    exit 1
-  fi
+HEADERS="$("$OBJDUMP" -p "$ROOT/build/display-unchecked.exe")"
+if grep -qiE 'DLL Name:.*(ucrtbase\.dll|api-ms-win-crt-)' <<< "$HEADERS" \
+    || ! grep -qiE 'DLL Name:.*msvcrt\.dll' <<< "$HEADERS"; then
+  rm -f "$ROOT/build/display-unchecked.exe"
+  printf '%s\n' 'ERROR: Win7 build requires msvcrt.dll and must not import UCRT.' \
+    'Use a msvcrt-default MinGW (Debian gcc-mingw-w64-i686) or -mcrtdll=msvcrt-os.' >&2
+  exit 1
 fi
+mv "$ROOT/build/display-unchecked.exe" "$ROOT/build/display.exe"
+file "$ROOT/build/display.exe"
+"$OBJDUMP" -f "$ROOT/build/display.exe"
 shasum -a 256 "$ROOT/build/display.exe" 2>/dev/null || sha256sum "$ROOT/build/display.exe"

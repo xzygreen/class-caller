@@ -1,172 +1,89 @@
-# 从单班版升级到多班级版：VPS 更新步骤
+# 从单班版升级：历史多班级指南的当前替代步骤
 
-适用于已经用 `deploy.sh` 部署在 `/opt/class-caller`、由 systemd 服务 `class-caller` 运行、Nginx 反代的服务器。整个过程中旧服务一直在跑，直到第 4 步重启。
+> 本仓库已经采用**个人账号 + 班级授权**。旧多班级版的共享密码、`/teacher/login`、`X-Teacher-Token` 及旧 Nginx 教师路径不再适用；旧接口返回 `410`。不要按旧教程重新设置班级共享密码，或运行已经移除的 `lib/config.normalize()`。
 
-## 0. 先在本机准备
+正式部署、备份、Nginx、停服初始化及回退以 [账号版升级指南](upgrade-accounts.md) 为准。本页只补充“仅有单班 `students.json`”时的转换与验收。安排维护窗口，不承诺升级期间服务持续可用。
 
-1. **改密码**：编辑 `students.json`，把四个班的占位密码换成真实密码，四个必须互不相同：
+## 1. 先确认数据来源并备份
 
-   ```json
-   "password": "chusan23-gai"   ← 改掉
-   ```
+- 如果已有 `/var/lib/class-caller/db.json`，它才是主库：先按账号版指南停服务并备份，不要用旧 `students.json` 覆盖主库，也不要删除主库触发重新导入。
+- 如果只有旧单班配置，先停旧服务，受限备份原文件、代码、systemd unit 和 Nginx 配置。旧文件可能含姓名和明文密码，不得提交到 Git 或公开工单。
+- 本机和 CI 测试使用合成名单。传输新源码使用干净的 Git 归档，不镜像本机数据或用 `rsync --delete` 清空服务器目录。
 
-2. 本机跑一遍测试确认配置合法：
+## 2. 将旧单班文件转换为可导入的 version 2 格式
 
-   ```bash
-   npm test
-   ```
+当前首次导入只接受 `{ "version": 2, "classes": [...] }`，不会自动猜测旧单班结构。由管理员在受限位置编辑一份转换后的文件；保留姓名，给每个班级确定唯一且长期不变的标识，**不再填写 password 字段**。例如（全为合成数据）：
 
-3. 把整个项目目录同步到服务器（不要传 `node_modules`、`.DS_Store`）：
-
-   ```bash
-   rsync -av --delete --exclude node_modules --exclude .DS_Store \
-     ./ 用户名@服务器地址:~/class-caller/
-   ```
-
-## 1. 服务器上先留一份可回退的现场
-
-```bash
-ssh 用户名@服务器地址
-sudo cp -a /opt/class-caller /opt/class-caller.pre-v2   # 旧代码 + 旧配置整体备份
-```
-
-## 2. 替换班级配置（这一步必须在 deploy.sh 之前做）
-
-`deploy.sh` 不会覆盖服务器上已有的 `students.json`，而旧的单班格式会让新版本起不来，所以要手动换成四班文件：
-
-```bash
-sudo install -m 0640 -o root -g classcaller ~/class-caller/students.json /opt/class-caller/students.json
-```
-
-如果想在服务器上直接改而不是复制本机文件：`sudoedit /opt/class-caller/students.json`，按 README 的 `version: 2` 格式写。
-
-可选：先用新代码校验一下（`deploy.sh` 也会自动做这一步）：
-
-```bash
-cd ~/class-caller && node -e '
-const { normalize } = require("./lib/config");
-const c = normalize(JSON.parse(require("fs").readFileSync("/opt/class-caller/students.json","utf8")));
-console.log(c.classes.map(k => `${k.name}(${k.id}) ${k.students.length}人`).join("、"));'
-```
-
-期望输出：`示例班级1(class-a) 3人、示例班级2(class-b) 3人、示例班级3(class-c) 3人、示例班级4(class-d) 3人`。
-
-## 3. 更新 Nginx（改两个 location，先改好再 reload）
-
-打开站点文件（通常是 `/etc/nginx/sites-available/class-caller`），把原来的
-
-```nginx
-location = /api/public/stream { ... }
-location /api/teacher/ { ... }
-```
-
-分别改成正则匹配（块内其他内容照旧，注意 SSE 块多了一行 `X-Real-IP`）：
-
-```nginx
-location ~ ^/api/classes/[a-z0-9-]+/public/stream$ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host       $host;
-    proxy_set_header X-Real-IP  $remote_addr;
-    proxy_set_header Connection '';
-    proxy_buffering    off;
-    proxy_cache        off;
-    gzip               off;
-    chunked_transfer_encoding on;
-    proxy_read_timeout 24h;
-    proxy_send_timeout 24h;
-}
-
-location ~ ^/api/classes/[a-z0-9-]+/teacher/ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host              $host;
-    proxy_set_header X-Real-IP         $remote_addr;
-    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+```json
+{
+  "version": 2,
+  "classes": [
+    {
+      "id": "class-a",
+      "name": "示例班级",
+      "code": "01",
+      "color": "blue",
+      "autoClearSeconds": 30,
+      "students": ["测试学生甲", "测试学生乙"],
+      "launcher": { "mode": "off", "freshSeconds": 30 }
+    }
+  ]
 }
 ```
 
-完整示例见仓库 `nginx.conf.example`。然后：
+班级标识限 1–32 位小写字母、数字和连字符，首位为字母或数字。每班最多 200 人、姓名最多 20 字；同名会去重，不能用姓名区分两位同名学生。不要为了与示例一致而把实际班级强制拆成四个。
 
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-`X-Real-IP` 是登录失败限速的依据，不要漏掉。
-
-## 4. 运行部署脚本
+可用**新源码**进行只读导入校验（只输出班级数量，不输出真实名单）：
 
 ```bash
 cd ~/class-caller
-sudo bash ./deploy.sh
+node -e '
+const { importLegacyConfig } = require("./lib/config");
+const classes = importLegacyConfig(process.argv[1]);
+console.log("可导入班级数：" + classes.length);
+' /受限路径/students-converted.json
 ```
 
-脚本会依次：跑全部测试 → 用新代码校验线上 `students.json`（不合法就停下，不改动任何东西）→ 备份并安装代码 → 重启服务 → 用 `/api/public/classes` 做健康检查。看到 `OK，服务在 127.0.0.1:3000 正常响应` 即成功。
-
-## 5. 从外部验证
+校验失败先修正转换副本，不更改唯一的原始名单。通过后，在旧服务仍停止、已有受限备份的前提下，把确认过的文件放到 `/opt/class-caller/students.json`：
 
 ```bash
-D=https://你的域名
-
-curl -s $D/api/public/classes                       # 四个班的 id/名称/编号/颜色
-curl -s -o /dev/null -w '%{http_code}\n' $D/api/public/config   # 必须是 410（旧接口已停用）
-curl -sN --max-time 3 "$D/api/classes/class-a/public/stream?role=display" | head -3
-                                                    # retry: 2000 + 一帧 "type":"clear","classId":"class-a"
-curl -s -X POST $D/api/classes/class-a/teacher/login \
-  -H 'content-type: application/json' -d '{"password":"示例班级1的密码"}'
-                                                    # 返回 token、expiresAt、class
+sudo install -m 0640 -o root -g classcaller \
+  /受限路径/students-converted.json /opt/class-caller/students.json
 ```
 
-服务日志：
+随后按 [账号版指南第 2–4 节](upgrade-accounts.md#2-更新-nginx) 更新 Nginx、运行部署脚本、初始化首个管理员。导入只在主库没有班级时发生；导入成功后在管理端维护名单。原文件及副本不会被自动安全擦除，按 [隐私政策](../PRIVACY.md) 管理留存。
+
+## 3. 首个管理员必须停服初始化
+
+部署脚本即使刚启动了服务，也要按以下顺序执行；已有可用管理员时走管理端创建账号。不要启动两个进程写同一 `db.json`，不要删活动锁。
 
 ```bash
-sudo journalctl -u class-caller -f
+sudo systemctl stop class-caller && \
+  sudo -u classcaller env DATA_DIR=/var/lib/class-caller \
+    node /opt/class-caller/scripts/init-admin.js && \
+  sudo systemctl start class-caller
 ```
 
-启动行 `server_start` 里应列出四个班；之后如果不断出现 `legacy_endpoint`，说明还有大屏或脚本在用旧的无班级链接。
+确认 `setupRequired` 为 `false`，管理员可以登录，之后新教师注册不会影响管理员。教师改用个人账号，再由管理员批准班级授权；没有共享班级密码登录入口。
 
-## 6. 更新四个教室的大屏
+## 4. 更新绑定并做小范围验收
 
-**浏览器大屏**：链接改为带班级参数，旧链接会显示"此设备尚未绑定班级"而不会进入任何班：
+- 浏览器地址为 `https://你的域名/display?class=class-a`，替换为实际班级标识。公开配置/流路径为 `/api/classes/<班级>/public/config`、`/api/classes/<班级>/public/stream`；教师流为 `/api/classes/<班级>/stream`。
+- Nginx 同时匹配公开与教师 SSE，关闭缓冲/缓存/gzip，透传 `X-Real-IP` 和 `X-Forwarded-Proto`，移除旧 Basic Auth；使用当前 [`nginx.conf.example`](../nginx.conf.example)，不要重新添加旧 `/teacher/` 认证路径。
+- Windows 大屏及启动器分别按 [大屏指南](windows-display.md) 和 [启动器指南](windows-launcher.md) 配置；核对 Release 的校验文件、标签提交和现有限制，不假定旧程序能解析所有新版内容。
+- 先用一个合成班级测试点人、留言、清屏、收到确认和权限撤销，再核对不同班级间隔离。按学校实际课表检查全校作息，不在课间时点人应被拒绝。
 
-| 班级 | 链接 |
-|---|---|
-| 示例班级1 | `https://你的域名/display?class=class-a` |
-| 示例班级2 | `https://你的域名/display?class=class-b` |
-| 示例班级3 | `https://你的域名/display?class=class-c` |
-| 示例班级4 | `https://你的域名/display?class=class-d` |
-
-**Windows display.exe**（每台机器）：
-
-1. 用新编译的 `windows-display/build/display.exe` 覆盖 `D:\class-caller\display.exe`（先 `Ctrl+Q` 退出旧程序）。
-2. 编辑 `D:\class-caller\display.ini`，在 `server=` 下加一行本教室的班级，四台各不相同：
-   ```ini
-   class_id=class-a
-   ```
-3. 重新运行 `start-display.cmd`。核对：窗口标题为"示例班级1 · 老师找人通知大屏"，顶栏有班名和编号，待机画面中央也有班名，右上角绿点"已连接"。
-4. 如果中央显示红色"班级绑定错误"，是 `class_id` 拼错了（例如写成 `class23`、`23` 或有大写）。
-
-**旧的 win7-launcher 原生监听**（如果还在用）：`--watch` 地址改为 `https://你的域名/api/classes/class-a/public/stream?role=launcher`，并把该班 `students.json` 里的 `launcher.mode` 改回 `protocol` 或 `native`。
-
-## 7. 教师端试运行
-
-按方案建议先只让一个班用：打开 `https://你的域名/teacher`，选班、输该班密码，发一名测试学生，确认只有该班大屏弹出、其他三块屏毫无反应；再登录另一个班发送一次，反向确认。都正常后再通知四个班启用。
-
-## 回退
+只读健康检查：
 
 ```bash
-sudo systemctl stop class-caller
-sudo rm -rf /opt/class-caller
-sudo mv /opt/class-caller.pre-v2 /opt/class-caller
-# Nginx 两个 location 改回 location = /api/public/stream 与 location /api/teacher/
-sudo nginx -t && sudo systemctl reload nginx
-sudo systemctl start class-caller
+curl --fail http://127.0.0.1:3000/api/public/status
+curl --fail https://你的域名/api/public/status
 ```
 
-## 常见问题
+响应应为应用 JSON，而不是 Cloudflare 挑战页面或 Basic Auth 登录框。公开班级目录可能含班级名称，故障报告中也应谨慎披露。
 
-- **deploy.sh 在"校验线上 students.json"处停下**：第 2 步没做或格式不对，按提示改成 `version: 2` 格式后重跑。
-- **健康检查失败**：`sudo journalctl -u class-caller -n 50`，多半是 `students.json` 里 `password` 重复或 `id` 不合法（只能小写字母、数字、连字符）。
-- **大屏"未连接 · 错误 404"**：Nginx 还是旧的 `location = /api/public/stream`（第 3 步没生效），或 `class_id` 不存在。
-- **老师登录提示"密码错误次数过多"**：同一来源对同一班连续错 5 次锁 60 秒，等一分钟再试；如果 Nginx 没传 `X-Real-IP`，所有老师会共用一个计数，务必检查第 3 步。
+## 5. 回退和隐私留存
+
+回退必须停服，使用已保存的**匹配代码、配置和数据**，保留失败现场；具体命令见 [账号版回退流程](upgrade-accounts.md#回退)。不要 `rm -rf` 唯一副本，也不要用一个未经兼容性验证的旧程序读取新主库。
+
+通知、账号、会话和审计会持久化，重启或清屏不等于删除。恢复旧快照可能恢复已删除信息、旧权限和仍有效的会话；重新落实删除/撤权/改密决定后再开放访问。自动备份按最近 14 **份**而非 14 **天**轮转；旧配置、升级现场、清理前和异地备份需要单独保留期限。按班级/日期的离线清理预览与确认命令见 [隐私政策第 8 节](../PRIVACY.md#8-查询更正与删除)。

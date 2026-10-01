@@ -180,9 +180,12 @@ t('执行时重新校验：作息已关闭则跳过；学生被移出名单则�
   try {
     const { client, admin } = await teacherWithAccess(s.base, [A]);
     const sch = await client.cpost(A, 'schedules', { names: ['学生130'], time: '11:40' });
-    // 直接改内存里的作息（模拟作息在执行瞬间已关闭但任务未被 reconcile 的边界）
-    s.app.windows.set({ windows: [{ start: '11:40', end: '11:50' }] });
-    s.app.windows.set({ windows: [{ start: '11:41', end: '11:50' }] });
+    // 持久化作息已更新，但尚未执行任务协调；调度必须使用当前事务里的作息。
+    const windows = { windows: [{ start: '11:41', end: '11:50' }] };
+    await s.app.store.update((db, tx) => {
+      db.callWindows = windows;
+      tx.afterCommit(() => s.app.windows.set(windows));
+    });
     s.clock.set(at(MON, 11, 40, 10));
     await s.app.scheduler.tick();
     assert.strictEqual((await client.cget(A, 'notices')).json.notices.length, 0);

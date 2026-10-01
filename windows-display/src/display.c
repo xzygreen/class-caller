@@ -29,10 +29,14 @@
 #define _UNICODE
 #endif
 
+#ifdef CC_NATIVE_CONTRACT_TEST
+#include "../../test/native/portable-win-types.h"
+#else
 #include <windows.h>
 #include <shellapi.h>
 #include <winhttp.h>
 #include <strsafe.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
@@ -99,7 +103,9 @@
 #define C_WHITE     RGB(0xFF, 0xFF, 0xFF)
 #define C_LIVE_DIM  RGB(0x13, 0x3A, 0x2A)   /* 「已收到」按钮底色 */
 
+#ifndef CC_NATIVE_CONTRACT_TEST
 static const WCHAR *CC_FONT = L"Microsoft YaHei";
+#endif
 
 /* ---------- 数据结构 ---------- */
 typedef struct Config {
@@ -173,6 +179,7 @@ typedef struct UrlParts {
     int secure;
 } UrlParts;
 
+#ifndef CC_NATIVE_CONTRACT_TEST
 /* ---------- 全局状态（UI 线程持有） ---------- */
 static Config g_config;
 static HWND g_hwnd = NULL;
@@ -274,6 +281,8 @@ static int read_ini_bool(const WCHAR *ini, const WCHAR *key, int fallback)
     return (int)GetPrivateProfileIntW(L"display", key, fallback, ini) != 0;
 }
 
+#endif /* !CC_NATIVE_CONTRACT_TEST: Windows utilities */
+
 /* 与服务端 CLASS_ID_RE 一致：小写字母/数字开头，之后允许连字符，最多 32 位 */
 static int class_id_valid(const WCHAR *id)
 {
@@ -287,9 +296,21 @@ static int class_id_valid(const WCHAR *id)
     return 1;
 }
 
-static void load_config(const WCHAR *requested_ini, const WCHAR *server_override, const WCHAR *class_override)
+/* Use the original length, not a possibly truncated 32-character prefix. */
+static int assign_class_id(WCHAR *destination, const WCHAR *source, SIZE_T length, int truncated)
+{
+    destination[0] = L'\0';
+    if (truncated || length > CC_CLASS_ID_UNITS || wcslen(source) != length) return 0;
+    /* Empty means unconfigured (offline preview is still allowed). */
+    if (length != 0 && !class_id_valid(source)) return 0;
+    return SUCCEEDED(StringCchCopyW(destination, CC_CLASS_ID_UNITS + 1, source));
+}
+
+#ifndef CC_NATIVE_CONTRACT_TEST
+static int load_config(const WCHAR *requested_ini, const WCHAR *server_override, const WCHAR *class_override)
 {
     WCHAR directory[CC_PATH_CHARS];
+    WCHAR raw_class[CC_CLASS_ID_UNITS + 2];
     SIZE_T length;
 
     memset(&g_config, 0, sizeof(g_config));
@@ -307,11 +328,14 @@ static void load_config(const WCHAR *requested_ini, const WCHAR *server_override
     length = wcslen(g_config.server);
     while (length > 0 && g_config.server[length - 1] == L'/') g_config.server[--length] = L'\0';
 
-    GetPrivateProfileStringW(L"display", L"class_id", L"", g_config.class_id, CC_CLASS_ID_UNITS + 1, g_config.ini_path);
-    if (class_override != NULL) StringCchCopyW(g_config.class_id, CC_CLASS_ID_UNITS + 1, class_override);
-    length = wcslen(g_config.class_id);
-    while (length > 0 && (g_config.class_id[length - 1] == L' ' || g_config.class_id[length - 1] == L'\t')) {
-        g_config.class_id[--length] = L'\0';
+    if (class_override != NULL) {
+        if (!assign_class_id(g_config.class_id, class_override, wcslen(class_override), 0)) return 0;
+    } else {
+        /* The extra character distinguishes a valid 32-unit value from truncation. */
+        length = GetPrivateProfileStringW(L"display", L"class_id", L"", raw_class,
+            CC_CLASS_ID_UNITS + 2, g_config.ini_path);
+        if (!assign_class_id(g_config.class_id, raw_class, length,
+                length >= CC_CLASS_ID_UNITS + 1)) return 0;
     }
 
     g_config.topmost_when_active = read_ini_bool(g_config.ini_path, L"topmost_when_active", 1);
@@ -325,7 +349,9 @@ static void load_config(const WCHAR *requested_ini, const WCHAR *server_override
         StringCchCopyW(g_config.log_path, CC_PATH_CHARS, directory);
         StringCchCatW(g_config.log_path, CC_PATH_CHARS, L"display.log");
     }
+    return 1;
 }
+#endif /* !CC_NATIVE_CONTRACT_TEST: Windows configuration */
 
 /* ================= 极简 JSON 解析（只解析服务端快照，拒绝一切异常输入） ================= */
 
@@ -476,11 +502,14 @@ static int json_parse_uint64(JsonParser *p, ULONGLONG *value)
     int digits = 0;
 
     json_skip_space(p);
+    if (p->pos + 1 < p->length && p->data[p->pos] == '0'
+        && p->data[p->pos + 1] >= '0' && p->data[p->pos + 1] <= '9') return 0;
     while (p->pos < p->length) {
         unsigned char c = p->data[p->pos];
         if (c < '0' || c > '9') break;
         if (result > 9007199254740991ULL / 10ULL) return 0;
         result = result * 10ULL + (ULONGLONG)(c - '0');
+        if (result > 9007199254740991ULL) return 0;
         ++p->pos;
         ++digits;
     }
@@ -506,6 +535,29 @@ static int json_skip_container(JsonParser *p, unsigned char open, unsigned char 
     }
 }
 
+static int json_skip_number(JsonParser *p)
+{
+    if (p->pos < p->length && p->data[p->pos] == '-') ++p->pos;
+    if (p->pos >= p->length) return 0;
+    if (p->data[p->pos] == '0') ++p->pos;
+    else {
+        if (p->data[p->pos] < '1' || p->data[p->pos] > '9') return 0;
+        do { ++p->pos; } while (p->pos < p->length && p->data[p->pos] >= '0' && p->data[p->pos] <= '9');
+    }
+    if (p->pos < p->length && p->data[p->pos] == '.') {
+        ++p->pos;
+        if (p->pos >= p->length || p->data[p->pos] < '0' || p->data[p->pos] > '9') return 0;
+        do { ++p->pos; } while (p->pos < p->length && p->data[p->pos] >= '0' && p->data[p->pos] <= '9');
+    }
+    if (p->pos < p->length && (p->data[p->pos] == 'e' || p->data[p->pos] == 'E')) {
+        ++p->pos;
+        if (p->pos < p->length && (p->data[p->pos] == '+' || p->data[p->pos] == '-')) ++p->pos;
+        if (p->pos >= p->length || p->data[p->pos] < '0' || p->data[p->pos] > '9') return 0;
+        do { ++p->pos; } while (p->pos < p->length && p->data[p->pos] >= '0' && p->data[p->pos] <= '9');
+    }
+    return 1;
+}
+
 static int json_skip_value(JsonParser *p)
 {
     int c = json_peek(p);
@@ -518,16 +570,7 @@ static int json_skip_value(JsonParser *p)
     else if (c == 't' && p->pos + 4 <= p->length && memcmp(p->data + p->pos, "true", 4) == 0) { p->pos += 4; ok = 1; }
     else if (c == 'f' && p->pos + 5 <= p->length && memcmp(p->data + p->pos, "false", 5) == 0) { p->pos += 5; ok = 1; }
     else if (c == 'n' && p->pos + 4 <= p->length && memcmp(p->data + p->pos, "null", 4) == 0) { p->pos += 4; ok = 1; }
-    else {
-        /* 数字：宽松跳过合法字符即可，值本身不用 */
-        SIZE_T start = p->pos;
-        while (p->pos < p->length) {
-            unsigned char d = p->data[p->pos];
-            if ((d >= '0' && d <= '9') || d == '-' || d == '+' || d == '.' || d == 'e' || d == 'E') ++p->pos;
-            else break;
-        }
-        ok = p->pos > start;
-    }
+    else ok = json_skip_number(p);
     --p->depth;
     return ok;
 }
@@ -614,7 +657,7 @@ static int parse_snapshot(const char *json, SIZE_T length, DisplayEvent *event)
     WCHAR key[64];
     WCHAR type[16];
     WCHAR acked_names[CC_MAX_NAMES][CC_MAX_NAME_UNITS + 1];
-    int seen_type = 0, seen_id = 0, acked_count = 0, i, j;
+    int seen_type = 0, seen_id = 0, seen_class = 0, acked_count = 0, i, j;
 
     memset(event, 0, sizeof(*event));
     memset(&p, 0, sizeof(p));
@@ -626,13 +669,14 @@ static int parse_snapshot(const char *json, SIZE_T length, DisplayEvent *event)
     for (;;) {
         if (!json_parse_string(&p, key, 64, NULL) || !json_expect(&p, ':')) return 0;
         if (wcscmp(key, L"type") == 0) {
-            if (!json_parse_string(&p, type, 16, NULL)) return 0;
+            if (seen_type || !json_parse_string(&p, type, 16, NULL)) return 0;
             seen_type = 1;
         } else if (wcscmp(key, L"id") == 0) {
-            if (!json_parse_uint64(&p, &event->id)) return 0;
+            if (seen_id || !json_parse_uint64(&p, &event->id)) return 0;
             seen_id = 1;
         } else if (wcscmp(key, L"classId") == 0) {
-            if (!json_parse_string(&p, event->class_id, CC_CLASS_ID_UNITS + 1, NULL)) return 0;
+            if (seen_class || !json_parse_string(&p, event->class_id, CC_CLASS_ID_UNITS + 1, NULL)) return 0;
+            seen_class = 1;
         } else if (wcscmp(key, L"names") == 0) {
             if (!parse_names(&p, event)) return 0;
         } else if (wcscmp(key, L"message") == 0) {
@@ -681,9 +725,10 @@ static int parse_snapshot(const char *json, SIZE_T length, DisplayEvent *event)
         return 0;
     }
     json_skip_space(&p);
-    if (p.pos != p.length || !seen_type || !seen_id) return 0;
+    if (p.pos != p.length || !seen_type || !seen_id || !seen_class || !class_id_valid(event->class_id)) return 0;
     event->is_call = wcscmp(type, L"call") == 0;
     event->is_announcement = wcscmp(type, L"announcement") == 0;
+    if (!event->is_call && !event->is_announcement && wcscmp(type, L"clear") != 0) return 0;
     if (event->is_call && event->name_count == 0) return 0;
     if (event->is_announcement && event->title[0] == L'\0' && event->body[0] == L'\0') return 0;
     for (i = 0; i < acked_count; ++i) {
@@ -703,6 +748,7 @@ static int parse_public_config(const char *json, SIZE_T length, ClassInfo *info,
     JsonParser p;
     WCHAR key[64];
     WCHAR value[64];
+    int seen_class = 0;
 
     memset(&p, 0, sizeof(p));
     p.data = (const unsigned char *)json;
@@ -710,13 +756,15 @@ static int parse_public_config(const char *json, SIZE_T length, ClassInfo *info,
     memset(info, 0, sizeof(*info));
     *not_found = 0;
     if (!json_expect(&p, '{')) return 0;
-    if (json_peek(&p) == '}') return 1;
+    if (json_peek(&p) == '}') return 0;
     for (;;) {
         if (!json_parse_string(&p, key, 64, NULL) || !json_expect(&p, ':')) return 0;
         if (wcscmp(key, L"className") == 0) {
             if (!json_parse_string(&p, info->name, CC_CLASS_NAME_UNITS + 1, NULL)) return 0;
         } else if (wcscmp(key, L"classId") == 0) {
-            if (!json_parse_string(&p, info->class_id, CC_CLASS_ID_UNITS + 1, NULL)) return 0;
+            if (seen_class || !json_parse_string(&p, info->class_id, CC_CLASS_ID_UNITS + 1, NULL)
+                || !class_id_valid(info->class_id)) return 0;
+            seen_class = 1;
         } else if (wcscmp(key, L"code") == 0) {
             if (!json_parse_string(&p, info->code, CC_CLASS_CODE_UNITS + 1, NULL)) return 0;
         } else if (wcscmp(key, L"error") == 0) {
@@ -726,11 +774,16 @@ static int parse_public_config(const char *json, SIZE_T length, ClassInfo *info,
             return 0;
         }
         if (json_peek(&p) == ',') { ++p.pos; continue; }
-        if (json_peek(&p) == '}') { ++p.pos; return 1; }
+        if (json_peek(&p) == '}') {
+            ++p.pos;
+            json_skip_space(&p);
+            return p.pos == p.length && (seen_class || *not_found);
+        }
         return 0;
     }
 }
 
+#ifndef CC_NATIVE_CONTRACT_TEST
 /* ================= SSE 解析 ================= */
 
 static void sse_dispatch(SseParser *parser)
@@ -872,22 +925,30 @@ static int parse_url(const WCHAR *url, UrlParts *result)
 }
 
 /*
- * WinHTTP 默认不读 IE/系统代理设置，而学校机房常常只配置了 IE 代理。
- * 这里显式取当前用户的 IE 代理：有固定代理就用它，否则直连。
+ * Supported proxy policy for config GET, SSE and ACK alike: current-user IE
+ * static proxy, otherwise the machine WinHTTP default (netsh winhttp).
+ * PAC/WPAD are NOT evaluated; do not imply browser connectivity proves ours.
  */
 static HINTERNET open_session(int secure)
 {
     HINTERNET session;
     DWORD protocols;
     WINHTTP_CURRENT_USER_IE_PROXY_CONFIG ie;
-    static int logged_proxy = 0;
+    static volatile LONG logged_proxy = 0;
+    int report;
 
     memset(&ie, 0, sizeof(ie));
-    if (WinHttpGetIEProxyConfigForCurrentUser(&ie) && ie.lpszProxy != NULL && ie.lpszProxy[0] != L'\0') {
+    WinHttpGetIEProxyConfigForCurrentUser(&ie);
+    report = InterlockedCompareExchange(&logged_proxy, 1, 0) == 0;
+    if (report && (ie.fAutoDetect || (ie.lpszAutoConfigUrl && ie.lpszAutoConfigUrl[0]))) {
+        log_line(L"PAC/WPAD is not supported; configure an IE static proxy or netsh winhttp proxy (see deployment guide)");
+    }
+    if (ie.lpszProxy != NULL && ie.lpszProxy[0] != L'\0') {
         session = WinHttpOpen(CC_USER_AGENT, WINHTTP_ACCESS_TYPE_NAMED_PROXY,
             ie.lpszProxy, ie.lpszProxyBypass != NULL ? ie.lpszProxyBypass : WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!logged_proxy) { log_line(L"using IE proxy: %ls", ie.lpszProxy); logged_proxy = 1; }
+        if (report) log_line(L"using current-user IE static proxy");
     } else {
+        if (report) log_line(L"using machine WinHTTP default proxy (direct only if no default proxy is configured)");
         session = WinHttpOpen(CC_USER_AGENT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     }
@@ -2306,7 +2367,10 @@ static int set_autostart(int enable)
         0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &key, NULL);
     if (status != ERROR_SUCCESS) return 0;
     if (enable) {
-        StringCchPrintfW(command, CC_PATH_CHARS + 16, L"\"%ls\" --minimized", exe);
+        if (FAILED(StringCchPrintfW(command, CC_PATH_CHARS + 16, L"\"%ls\" --autostart", exe))) {
+            RegCloseKey(key);
+            return 0;
+        }
         status = RegSetValueExW(key, L"ClassCallerDisplay", 0, REG_SZ, (const BYTE *)command,
             (DWORD)((wcslen(command) + 1) * sizeof(WCHAR)));
     } else {
@@ -2346,7 +2410,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     WCHAR **argv;
     const WCHAR *ini_arg = NULL, *server_arg = NULL, *class_arg = NULL, *preview_arg = NULL, *msg_arg = NULL;
     const WCHAR *notice_arg = NULL;
-    int minimized_arg = 0;
+    int minimized_arg = 0, autostart_arg = 0;
     HANDLE mutex;
     WNDCLASSEXW wc;
     MSG msg;
@@ -2364,6 +2428,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         else if (wcscmp(argv[i], L"--preview-notice") == 0 && i + 1 < argc) notice_arg = argv[++i];
         else if (wcscmp(argv[i], L"--msg") == 0 && i + 1 < argc) msg_arg = argv[++i];
         else if (wcscmp(argv[i], L"--minimized") == 0) minimized_arg = 1;
+        else if (wcscmp(argv[i], L"--autostart") == 0) { autostart_arg = 1; minimized_arg = 1; }
         else if (wcscmp(argv[i], L"--install-autostart") == 0 || wcscmp(argv[i], L"--uninstall-autostart") == 0) {
             int enable = wcscmp(argv[i], L"--install-autostart") == 0;
             int done = set_autostart(enable);
@@ -2378,7 +2443,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
                 L"  display.exe [--config D:\\class-caller\\display.ini] [--server https://域名] [--class class-a]\n"
                 L"  display.exe --preview 张三,李四 [--msg 请到办公室]\n"
                 L"  display.exe --preview-notice 标题|正文    （离线预览班级留言版式）\n"
-                L"  display.exe --minimized\n"
+                L"  display.exe --minimized | --autostart\n"
                 L"  display.exe --install-autostart | --uninstall-autostart\n\n"
                 L"再次运行 display.exe 会把已经在运行的大屏窗口拉到最前。",
                 CC_APP_TITLE, MB_ICONINFORMATION | MB_OK);
@@ -2386,18 +2451,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         }
     }
 
-    /* 单实例：第二次启动只负责把已有窗口拉到前台，可作为“唤醒”脚本使用 */
+    /* Manual launch wakes the window; idempotent autostart must never restore it. */
     mutex = CreateMutexW(NULL, TRUE, CC_MUTEX_NAME);
     if (mutex != NULL && GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND existing = FindWindowW(CC_WINDOW_CLASS, NULL);
+        HWND existing = autostart_arg ? NULL : FindWindowW(CC_WINDOW_CLASS, NULL);
         if (existing != NULL) {
             AllowSetForegroundWindow(ASFW_ANY);
             PostMessageW(existing, WM_APP_SHOW, 0, 0);
         }
+        CloseHandle(mutex);
+        if (argv != NULL) LocalFree(argv);
         return 0;
     }
 
-    load_config(ini_arg, server_arg, class_arg);
+    if (!load_config(ini_arg, server_arg, class_arg)) {
+        MessageBoxW(NULL,
+            L"class_id 或 --class 格式不正确或过长。\n\n只能使用小写字母、数字和连字符（1–32 位）；首位必须是字母或数字。不会截断班级标识。",
+            CC_APP_TITLE L" · 班级绑定错误", MB_ICONERROR | MB_OK);
+        return 2;
+    }
     if (g_config.log_path[0] != L'\0') {
         g_log = CreateFileW(g_config.log_path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
             FILE_ATTRIBUTE_NORMAL, NULL);
@@ -2516,3 +2588,4 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     if (mutex != NULL) CloseHandle(mutex);
     return (int)msg.wParam;
 }
+#endif /* !CC_NATIVE_CONTRACT_TEST: Windows transport and UI */

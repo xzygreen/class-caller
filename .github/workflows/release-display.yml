@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v1.1.0"
+        description: "Existing release tag, for example v2.1.6 (never creates or overwrites a release)"
         required: true
         type: string
 
@@ -15,7 +15,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-display-${{ github.ref }}
+  # Manual dispatches from different branches must serialize on the target tag.
+  group: release-display-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -26,42 +27,59 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
     steps:
-      - name: Check out source
+      - name: Check out release tooling and existing tags
         uses: actions/checkout@v4
-
-      - name: Validate release tag
-        shell: bash
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $RELEASE_TAG" >&2
-            echo "Use a version such as v1.1.0 or v1.1.0-beta.1." >&2
-            exit 1
-          fi
-
-      - name: Install x86 MinGW toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes gcc-mingw-w64-i686 binutils-mingw-w64-i686 file zip
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Build display.exe
-        run: bash windows-display/build-mingw-x86.sh
+      - name: Resolve existing tag to a commit
+        id: source
+        shell: bash
+        run: |
+          commit="$(node scripts/verify-release.js resolve "$RELEASE_TAG")"
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+          # Keep these guards when checking out an older tag without the tooling.
+          cp scripts/verify-release.js "$RUNNER_TEMP/verify-release.js"
 
-      - name: Run tests, including compiled EXE checks
+      - name: Check out exactly the release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify checked-out HEAD matches the tag
+        run: node "$RUNNER_TEMP/verify-release.js" source "$RELEASE_TAG"
+
+      - name: Install C and x86 MinGW toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc gcc-mingw-w64-i686 binutils-mingw-w64-i686 file zip
+
+      - name: Build display.exe and win7-launcher.exe from this source
+        run: |
+          bash windows-display/build-mingw-x86.sh
+          bash windows-launcher/build-mingw-x86.sh
+
+      - name: Run tests, including required native contracts and fresh PE checks
+        env:
+          CC_NATIVE_REQUIRE: "1"
         run: npm test
 
       - name: Prepare release files
         shell: bash
         run: |
-          mkdir -p dist
+          mkdir dist
           asset="ClassCallerDisplay-${RELEASE_TAG}-win7-x86.exe"
           bundle="ClassCallerDisplay-${RELEASE_TAG}-win7-x86"
           cp windows-display/build/display.exe "dist/$asset"
-          mkdir -p "dist/$bundle"
+          mkdir "dist/$bundle"
           cp windows-display/build/display.exe "dist/$bundle/display.exe"
           cp windows-display/display.ini.example "dist/$bundle/display.ini"
           cp windows-display/start-display.cmd "dist/$bundle/start-display.cmd"
@@ -71,31 +89,30 @@ jobs:
           cp LICENSE NOTICE.md PRIVACY.md "dist/$bundle/"
           (
             cd dist
-            sha256sum "$asset" > "$asset.sha256"
             zip -9 -r "$bundle.zip" "$bundle"
-            sha256sum "$bundle.zip" > "$bundle.zip.sha256"
           )
+          # Verify the distributed privacy policy, not just the source document.
+          unzip -p "dist/$bundle.zip" "$bundle/PRIVACY.md" | cmp PRIVACY.md -
           rm -rf "dist/$bundle"
           file "dist/$asset"
           i686-w64-mingw32-objdump -f "dist/$asset" | grep -E 'file format|architecture'
+          node "$RUNNER_TEMP/verify-release.js" manifest "$RELEASE_TAG" dist
+          node "$RUNNER_TEMP/verify-release.js" verify "$RELEASE_TAG" dist
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ClassCallerDisplay-${{ env.RELEASE_TAG }}-win7-x86
-          path: |
-            dist/*.exe
-            dist/*.zip
-            dist/*.sha256
+          path: dist/*
           if-no-files-found: error
           retention-days: 30
 
-      - name: Create or update GitHub Release
+      - name: Create immutable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          release_notice=$(cat <<'EOF'
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
           ## 使用前必须配置
 
           解压 ZIP 后，请先打开 `display.ini`，填写实际部署信息：
@@ -104,15 +121,9 @@ jobs:
           - `class_id=`：这台大屏对应的班级 ID
 
           公开发布包不会包含真实服务网址、班级配置、学生名单或密码。配置完成后再运行 `display.exe` 或 `start-display.cmd`。
+
+          `release-manifest.json` 记录源码标签、提交、工具链及文件 SHA-256；下载后请先核对校验文件。该版本资产不可覆盖，修复请发布新标签。
           EOF
-          )
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip dist/*.sha256 --clobber
-          else
-            gh release create "$RELEASE_TAG" \
-              dist/*.exe dist/*.zip dist/*.sha256 \
-              --target "$GITHUB_SHA" \
-              --title "Class Caller Display $RELEASE_TAG" \
-              --notes "$release_notice" \
-              --generate-notes
-          fi
+          # Re-check HEAD/tag and every checksum immediately before publication.
+          # Existing releases (including partial/draft releases) are refused.
+          node "$RUNNER_TEMP/verify-release.js" publish "$RELEASE_TAG" dist "$RUNNER_TEMP/release-notes.txt"

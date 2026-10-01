@@ -131,7 +131,10 @@ t('管理员编辑作息后立即生效；不再合法的定时任务自动暂�
     // 重启后作息仍然是修改后的
     const dataFile = s.dataFile;
     const { JsonStore } = require('../lib/store');
-    const db = new JsonStore(dataFile).get();
-    assert.strictEqual(db.callWindows.windows.length, 2);
+    await s.app.close();
+    const reopened = new JsonStore(dataFile);
+    try {
+      assert.strictEqual(reopened.get().callWindows.windows.length, 2);
+    } finally { await reopened.close(); }
   } finally { await s.stop(); }
 });

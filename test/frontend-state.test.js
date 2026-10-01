@@ -286,6 +286,64 @@ test('教师和管理端拒绝 HTTP 200 的非应用响应，同时保留正常�
   }
 });
 
+test('F19 星期选择即时进入权威草稿，增删时段、空星期及恢复默认均不丢失', () => {
+  const p = page('admin.js');
+  const days = Array.from({ length: 7 }, (_, value) => Object.assign(node('input'), { value: String(value), checked: value > 0 && value < 6 }));
+  p.get('wDays').querySelectorAll = (selector) => selector === 'input:checked' ? days.filter((d) => d.checked) : days;
+  const tbody = node('tbody');
+  p.get('wTable').querySelector = () => tbody;
+  p.run("windowsDraft = { timezone: 'Asia/Shanghai', weekdays: [1,2,3,4,5], windows: [{ start: '08:00', end: '08:10' }] }; renderWindows()");
+  days[6].checked = true; days[1].checked = false; p.get('wDays').onchange();
+  assert.deepEqual(Array.from(p.run('windowsDraft.weekdays')), [2,3,4,5,6]);
+  p.get('wAdd').onclick();
+  tbody.children[0].children[3].children[0].onclick();
+  assert.deepEqual(days.filter((d) => d.checked).map((d) => Number(d.value)), [2,3,4,5,6]);
+  assert.equal(p.run('windowsDraft.windows.length'), 1);
+  days.forEach((d) => { d.checked = false; }); p.get('wDays').onchange(); p.get('wAdd').onclick();
+  assert.equal(p.run('windowsDraft.weekdays.length'), 0);
+  assert.equal(days.some((d) => d.checked), false);
+  p.get('wDefault').onclick();
+  assert.deepEqual(Array.from(p.run('windowsDraft.weekdays')), [1,2,3,4,5]);
+  assert.deepEqual(days.filter((d) => d.checked).map((d) => Number(d.value)), [1,2,3,4,5]);
+});
+
+test('F22 同班级在途点人只清理未变草稿，保留选人、取消、说明、搜索与清空后的撤销', async () => {
+  const edits = [
+    "toggleName(sel, 'A2', () => {})",
+    "toggleName(sel, 'A1', () => {})",
+    "$('msg').value = '下一条'; $('msg').oninput()",
+    "$('search').value = 'A2'; $('search').oninput()",
+    'clearSelection(); undo()',
+    "$('msg').value = 'changed'; $('msg').oninput(); $('msg').value = 'first'; $('msg').oninput()",
+  ];
+  for (const edit of edits) {
+    const p = teacher(); await p.enter('class-a', ['A1', 'A2']);
+    p.run("sel.add('A1'); $('msg').value = 'first'");
+    const done = p.run("$('send').onclick()");
+    p.run(edit);
+    const expected = p.run('callDraftKey()');
+    p.requests.at(-1).resolve({ ok: true, json: { notice: { id: 'sent' }, display: { current: null, queue: [] } } }); await done;
+    assert.equal(p.run('callDraftKey()'), expected, edit);
+    assert.equal(p.run('lastSent.message'), 'first');
+    assert.deepEqual(Array.from(p.run('lastSent.names')), ['A1']);
+    assert.equal(p.run('sending'), false);
+  }
+});
+
+test('F22 未编辑的成功请求清空草稿，失败请求保持原稿供重试', async () => {
+  for (const ok of [true, false]) {
+    const p = teacher(); await p.enter('class-a');
+    p.run("sel.add('class-a-student'); $('msg').value = 'first'; $('search').value = 'student'");
+    const done = p.run("$('send').onclick()");
+    p.requests.at(-1).resolve(ok ? { ok, json: { notice: { id: 'sent' }, display: { current: null, queue: [] } } } : { ok, json: { message: '失败' } });
+    await done;
+    assert.equal(p.run('sel.size'), ok ? 0 : 1);
+    assert.equal(p.get('msg').value, ok ? '' : 'first');
+    assert.equal(p.get('search').value, ok ? '' : 'student');
+    assert.equal(p.get('sendErr').hidden, ok);
+  }
+});
+
 test('撤销提示过期后按钮禁用，不再响应键盘点击', () => {
   const p = page('ui.js');
   p.run("icon = () => document.createElement('svg'); globalThis.called = 0; toast('已撤回', { action: { label: '撤销', fn() { called++; } } })");

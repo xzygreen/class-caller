@@ -15,6 +15,7 @@ function classPath(sub) {
 }
 
 function showBindError(title, detail, retrying = false) {
+  render({ type: 'clear' }, false);
   document.body.classList.add('bind-error');
   document.body.classList.remove('active', 'notice', 'urgent');
   $('bindTitle').textContent = title;
@@ -193,7 +194,32 @@ function maybeLaunch(ev) {
 
 /* ================= 「收到」确认 ================= */
 let ackBusy = false;
+let displayGeneration = 0;
+let displayIdentity = '';
 let ackNoteTimer = null;
+
+// 确认只会增加；较旧 HTTP / SSE 快照不能抹掉另一台大屏刚确认的姓名。
+function mergeAcks(latest, incoming) {
+  const byName = new Map();
+  for (const ack of [...(latest || []), ...(incoming || [])]) {
+    if (!ack || typeof ack.name !== 'string') continue;
+    const old = byName.get(ack.name);
+    if (!old || Number(ack.at) > Number(old.at)) byName.set(ack.name, ack);
+  }
+  return [...byName.values()];
+}
+
+function paintAcknowledgements(ev) {
+  const acked = ackedNames(ev);
+  for (const item of $('names').children) {
+    const done = acked.has(item.dataset.name);
+    item.classList.toggle('acked', done);
+    item.setAttribute('aria-label', item.dataset.name + (done ? '，已收到' : '，点一下确认收到'));
+    item.setAttribute('aria-pressed', String(done));
+  }
+  renderAck(ev);
+  paintRules(acked);
+}
 
 function ackedNames(ev) {
   const set = new Set();
@@ -226,11 +252,14 @@ function renderAck(ev) {
 }
 
 async function sendAck(ev, names) {
-  if (!ev || ev.type !== 'call' || ackBusy) return;
+  if (!ev || ev.type !== 'call' || ackBusy || ev !== currentEvent) return;
+  const generation = displayGeneration;
+  const ownsDisplay = () => generation === displayGeneration && currentEvent
+    && currentEvent.id === ev.id && currentEvent.classId === ev.classId;
   if (previewMode) {
     const wanted = names && names.length ? names : ev.names;
-    ev.acks = [...(ev.acks || []), ...wanted.map((name) => ({ name, at: Date.now() }))];
-    render(ev, false);
+    ev.acks = mergeAcks(ev.acks, wanted.map((name) => ({ name, at: Date.now() })));
+    paintAcknowledgements(ev);
     return;
   }
   ackBusy = true;
@@ -242,21 +271,23 @@ async function sendAck(ev, names) {
       body: JSON.stringify(names && names.length ? { eventId: ev.id, names } : { eventId: ev.id }),
     });
     const json = await response.json().catch(() => null);
+    if (!ownsDisplay()) return;
     if (!response.ok || !json || !json.ok) {
       setAckNote((json && json.message) || '发送失败，请再点一次', true);
       return;
     }
-    // SSE 会推最新状态；这里先就地更新，避免网络抖动时按钮迟迟不变
-    if (json.event && json.event.id === ev.id && json.event.classId === classId) {
-      ev.acks = json.event.acks;
-      render(ev, false);
+    // 只合并当前事件的确认，不重渲染请求快照，也不重新计算到期时间。
+    if (json.event && json.event.id === currentEvent.id && json.event.classId === classId) {
+      currentEvent.acks = mergeAcks(currentEvent.acks, json.event.acks);
+      paintAcknowledgements(currentEvent);
     }
-    setAckNote(json.allAcked ? '已通知' + (ev.caller || '老师') : '已记录', false);
+    const done = (currentEvent.names || []).every((name) => ackedNames(currentEvent).has(name));
+    setAckNote(done ? '已通知' + (currentEvent.caller || '老师') : '已记录', false);
   } catch {
-    setAckNote('连不上服务器，请再点一次', true);
+    if (ownsDisplay()) setAckNote('连不上服务器，请再点一次', true);
   } finally {
-    ackBusy = false;
-    renderAck(currentEvent && currentEvent.id === ev.id ? currentEvent : ev);
+    // 新事件可以有自己的在途 ACK；旧请求不能取消它的 busy 状态。
+    if (ownsDisplay()) { ackBusy = false; renderAck(currentEvent); }
   }
 }
 
@@ -296,9 +327,10 @@ function scheduleLocalExpiry(ev) {
   if (!expiryLocal) return;
 
   const eventId = ev.id;
+  const generation = displayGeneration;
   expiryTimer = setTimeout(() => {
+    if (shownEventId !== eventId || displayGeneration !== generation) return;
     expiryTimer = null;
-    if (shownEventId !== eventId) return;
     render({ type: 'clear' }, false);
   }, Math.max(0, expiryLocal - Date.now()));
 }
@@ -349,6 +381,44 @@ function setExpiry(ev) {
   }
 }
 
+/** 留言先按实测可用高度缩字；达到可读下限后保留全文和键盘 / 触摸滚动。 */
+function layoutAnnouncement() {
+  if (!document.body.classList.contains('notice')) return;
+  const box = $('noticeMain'), title = $('noticeTitle'), body = $('noticeBody');
+  const hint = $('noticeReadHint');
+  hint.hidden = true;
+  title.style.fontSize = ''; body.style.fontSize = '';
+  if (!box.clientWidth || !box.clientHeight) return;
+  const titleMax = parseFloat(getComputedStyle(title).fontSize);
+  const bodyMax = parseFloat(getComputedStyle(body).fontSize);
+  const apply = (scale) => {
+    title.style.fontSize = Math.max(28, titleMax * scale) + 'px';
+    body.style.fontSize = Math.max(22, bodyMax * scale) + 'px';
+  };
+  // 入场 transform 会暂时增大 scrollHeight；用未变换的内容盒测量，
+  // 避免把动画位移误判成溢出，或在动画结束后保留错误的滚动提示。
+  const fits = () => $('noticeContent').offsetHeight <= box.clientHeight + 1
+    && title.scrollWidth <= box.clientWidth + 1 && body.scrollWidth <= box.clientWidth + 1;
+  if (!fits()) {
+    let low = 0, high = 1;
+    apply(low);
+    if (fits()) {
+      for (let i = 0; i < 9; i++) {
+        const middle = (low + high) / 2;
+        apply(middle);
+        if (fits()) low = middle; else high = middle;
+      }
+      apply(low);
+    }
+  }
+  const scrolling = !fits();
+  hint.hidden = !scrolling;
+  box.classList.toggle('scrolling', scrolling);
+  box.setAttribute('aria-describedby', scrolling ? 'noticeReadHint' : '');
+}
+window.addEventListener('resize', layoutAnnouncement);
+if (window.ResizeObserver) new ResizeObserver(layoutAnnouncement).observe($('noticeMain'));
+
 /** 班级留言版式：标题 + 正文 + 发布人，没有「收到」按钮 */
 function renderAnnouncement(ev, isNew) {
   currentNames = [];
@@ -360,6 +430,9 @@ function renderAnnouncement(ev, isNew) {
   $('noticeTitle').textContent = ev.title || '';
   $('noticeBody').textContent = ev.body || '';
   $('noticeAuthor').textContent = ev.author || ev.caller || '';
+  if ($('notice').dataset.eventId !== String(ev.id)) $('noticeMain').scrollTop = 0;
+  $('notice').dataset.eventId = String(ev.id);
+  layoutAnnouncement();
   $('foot').classList.remove('has-msg');
   setExpiry(ev);
   scheduleLocalExpiry(ev);
@@ -368,6 +441,15 @@ function renderAnnouncement(ev, isNew) {
 }
 
 function render(ev, isNew) {
+  const identity = ev.type + ':' + (ev.id || 0) + ':' + (ev.classId || '');
+  if (identity !== displayIdentity || ev.type === 'clear') {
+    displayIdentity = identity;
+    displayGeneration++;
+    ackBusy = false;
+    setAckNote('', false);
+  } else if (ev.type === 'call' && currentEvent) {
+    ev = { ...ev, acks: mergeAcks(currentEvent.acks, ev.acks) };
+  }
   // 「当前事件」只对点人有意义：留言没有「收到」流程
   currentEvent = ev.type === 'call' ? ev : null;
   shownEventId = ev.type === 'clear' ? 0 : (ev.id || 0);

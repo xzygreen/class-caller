@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { compileParser, snapshots, freshPE } = require('./native/helpers.cjs');
 
 const root = path.join(__dirname, '..');
 const displayRoot = path.join(root, 'windows-display');
@@ -118,22 +119,86 @@ test('示例配置与文档覆盖 class_id、D 盘路径、自启、SSE 与前�
   }
 });
 
-test('存在编译产物时验证 MZ、i386、PE32 与 GUI 子系统', () => {
-  const binary = path.join(displayRoot, 'build', 'display.exe');
-  if (!fs.existsSync(binary)) return;
-  const data = fs.readFileSync(binary);
-  assert.strictEqual(data.toString('ascii', 0, 2), 'MZ');
-  const pe = data.readUInt32LE(0x3c);
-  assert.strictEqual(data.toString('ascii', pe, pe + 4), 'PE\0\0');
-  assert.strictEqual(data.readUInt16LE(pe + 4), 0x014c, '必须是 IMAGE_FILE_MACHINE_I386');
-  assert.strictEqual(data.readUInt16LE(pe + 24), 0x010b, '必须是 PE32，不能是 PE32+');
-  assert.strictEqual(data.readUInt16LE(pe + 24 + 68), 2, '必须是 IMAGE_SUBSYSTEM_WINDOWS_GUI');
-  assert.ok(!data.includes('ucrtbase.dll'), 'Windows 7 镜像不一定有 UCRT，不能依赖 ucrtbase');
-  assert.ok(!data.includes('api-ms-win-crt-'), 'mingw-w64 12 起默认链 UCRT（api-ms-win-crt-*），必须用 -mcrtdll=msvcrt-os 或 msvcrt 默认的工具链');
-  assert.ok(data.includes('msvcrt.dll'), '应只依赖系统自带的 msvcrt.dll');
-  assert.ok(data.includes(Buffer.from('老师找人通知大屏', 'utf16le')), '编译产物必须带新的程序名');
-  assert.ok(!data.includes(Buffer.from('班主任', 'utf16le')), '编译产物不得再出现班主任字样');
-  assert.ok(data.includes(Buffer.from('caller', 'utf16le')), '编译产物必须解析通知里的找人身份');
-  assert.ok(data.includes(Buffer.from('announcement', 'utf16le')), '编译产物必须识别留言快照');
-  assert.ok(data.includes(Buffer.from('班级留言', 'utf16le')), '编译产物必须带留言版式文案');
+test('compiled display parser consumes actual call, ACK, clear and announcement snapshots', async (t) => {
+  const parse = compileParser(t, 'display');
+  if (!parse) return;
+  const { call, ack, clear, announcement } = snapshots();
+  for (const [event, expected] of [
+    [call, `call ${call.id} 2 0 0 0`], [ack, `call ${ack.id} 2 1 0 0`],
+    [clear, `clear ${clear.id} 0 0 0 0`],
+    [announcement, `announcement ${announcement.id} 0 0 ${announcement.title.length} ${announcement.body.length}`],
+  ]) await t.test(`real ${event.type} with ${event.acks.length} ACKs`, () => {
+    assert.equal(parse('snapshot', JSON.stringify(event)), expected);
+  });
+  await t.test('full permitted announcement lengths and UTF-16 names', () => {
+    parse('snapshot', JSON.stringify({ ...announcement, title: '标'.repeat(30), body: '正'.repeat(300) }));
+    parse('snapshot', JSON.stringify({ ...call, names: ['😀'.repeat(10)] }));
+    parse('snapshot', JSON.stringify({ ...call, names: ['😀'.repeat(11)] }), 2);
+    parse('snapshot', JSON.stringify({ ...announcement, body: '正'.repeat(301) }), 2);
+  });
+  for (const mode of ['class-cli', 'class-ini']) {
+    for (const length of [1, 31, 32, 33, 500]) {
+      await t.test(`${mode} original identity length ${length}`, () => {
+        const result = parse(mode, 'a'.repeat(length), length <= 32 ? 0 : 2);
+        if (length <= 32) assert.equal(result, String(length));
+      });
+    }
+    for (const invalid of ['', '-a', 'A', 'a_', 'a/b', 'a b', 'a '.repeat(16), 'a'.repeat(32) + '-suffix']) {
+      await t.test(`${mode} rejects ${JSON.stringify(invalid)}`, () => parse(mode, invalid, 2));
+    }
+  }
+  for (const classId of ['', null, '-a', 'A', '班级', 'a'.repeat(33)]) {
+    await t.test(`snapshot invalid classId ${JSON.stringify(classId)}`, () => parse('snapshot', JSON.stringify({ ...call, classId }), 2));
+  }
+  await t.test('snapshot requires unambiguous classId/type/id and valid JSON numbers', () => {
+    for (const key of ['classId', 'type', 'id']) {
+      const missing = { ...call }; delete missing[key];
+      parse('snapshot', JSON.stringify(missing), 2);
+      parse('snapshot', JSON.stringify(call).replace(/}$/, `,${JSON.stringify(key)}:${JSON.stringify(call[key])}}`), 2);
+    }
+    parse('snapshot', JSON.stringify({ ...call, type: 'unexpected' }), 2);
+    for (const bad of ['01', '-1', '9007199254740992', '1e3']) {
+      parse('snapshot', JSON.stringify(call).replace(/"id":\d+/, `"id":${bad}`), 2);
+    }
+    for (const bad of ['+', '-', '1.', '1e', '1e+', '00', '--1']) {
+      parse('snapshot', JSON.stringify(call).replace(/}$/, `,"extra":${bad}}`), 2);
+    }
+    parse('snapshot', JSON.stringify(call).replace(/}$/, ',"extra":-1.5e+2}'));
+  });
+  await t.test('reject invalid UTF-8, NUL, surrogates, controls, trailing data and excessive depth', () => {
+    parse('snapshot', Buffer.concat([Buffer.from(JSON.stringify(call).slice(0, -1) + ',"extra":"'), Buffer.from([0xc0, 0xaf]), Buffer.from('"}')]), 2);
+    for (const message of ['\u0000', '\ud800', '\n', 'a'.repeat(61)]) {
+      parse('snapshot', JSON.stringify({ ...call, message }), 2);
+    }
+    parse('snapshot', JSON.stringify(call) + '{}', 2);
+    parse('snapshot', JSON.stringify(call).replace(/}$/, ',"extra":' + '['.repeat(33) + '0' + ']'.repeat(33) + '}'), 2);
+    parse('snapshot', JSON.stringify({ ...call, extra: { compatible: [true, null, 1.5] } }));
+  });
+  await t.test('public config identity cannot be truncated, duplicated or followed by junk', () => {
+    const config = { classId: 'class-a', className: '示例班级', code: '01' };
+    assert.equal(parse('config', JSON.stringify(config)), 'configured');
+    assert.equal(parse('config', '{"error":"CLASS_NOT_FOUND"}'), 'not-found');
+    for (const invalid of ['{}', JSON.stringify({ ...config, classId: 'a'.repeat(33) }),
+      JSON.stringify(config) + '{}', '{"classId":"class-a","classId":"class-b"}']) parse('config', invalid, 2);
+  });
 });
+
+test('fresh display build is PE32 i386 GUI 6.01 with MSVCRT and no UCRT', (t) => {
+  const data = freshPE(t, 'display', 2);
+  if (!data) return;
+  assert.ok(data.includes(Buffer.from('老师找人通知大屏', 'utf16le')), '编译产物必须带新的程序名');
+  assert.ok(data.includes(Buffer.from('announcement', 'utf16le')), '编译产物必须识别留言快照');
+});
+
+test('autostart distinguishes automatic idempotent start from manual wake', () => {
+  const install = fs.readFileSync(path.join(displayRoot, 'install-autostart.cmd'), 'utf8');
+  assert.ok(install.includes('if errorlevel 1 goto fallback'));
+  assert.ok(install.includes('reg delete "%RUNKEY%" /v ClassCallerDisplay'));
+  assert.ok(install.indexOf('exit /b 0') < install.indexOf(':fallback'));
+  assert.ok(install.includes('--autostart'));
+  assert.ok(source.includes('autostart_arg ? NULL : FindWindowW'));
+});
+
+test('Windows integration: delayed double autostart stays minimized; real INI/CLI binding and static proxy GET/SSE/ACK', {
+  skip: 'Requires a disposable interactive Windows 7/10 session, registry and controlled proxy network; portable tests do not verify these APIs',
+}, () => {});

@@ -424,6 +424,9 @@ tbody tr:hover td { background: #FBFCFD; }
 .screen-169.urgent .pv-kind { color: var(--alert-on-ink); }
 .screen-169.urgent .pv-title::after { background: var(--alert-on-ink); }
 
+.preview-full summary { min-height: var(--hit); display: list-item; align-content: center; cursor: pointer; color: var(--text-strong); }
+.preview-full h3, .preview-full p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---------- 倒计时 ---------- */
 .countdown { display: none; align-items: center; gap: var(--gap-tight); margin-top: 10px; font-size: var(--fs-meta); color: var(--text-muted); }
 .countdown.on { display: flex; }

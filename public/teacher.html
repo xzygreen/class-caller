@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <title>Caller · 教师端</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.5">
-<link rel="stylesheet" href="ui.css?v=2.1.5">
-<link rel="stylesheet" href="teacher.css?v=2.1.5">
-<link rel="icon" href="/favicon.ico?v=2.1.5" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.5" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.5">
+<link rel="stylesheet" href="tokens.css?v=2.1.6">
+<link rel="stylesheet" href="ui.css?v=2.1.6">
+<link rel="stylesheet" href="teacher.css?v=2.1.6">
+<link rel="icon" href="/favicon.ico?v=2.1.6" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.6" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.6">
 </head>
 <body>
 
@@ -202,7 +202,7 @@
         </form>
       </section>
       <section class="panel ann-preview" aria-labelledby="annPvTitle">
-        <div class="panel-head"><h2 id="annPvTitle">大屏预览</h2><p>按教室大屏 16:9 比例缩放</p></div>
+        <div class="panel-head"><h2 id="annPvTitle">大屏预览</h2><p>16:9 缩略示意，不代表全文都能在一屏显示。</p></div>
         <div id="annPreview" class="screen-169" aria-hidden="true">
           <div class="pv-rail"><span id="pvClass">班级</span><span id="pvClock">--:--</span></div>
           <div class="pv-main">
@@ -212,6 +212,12 @@
           </div>
           <div class="pv-author" id="pvAuthor">—— 老师</div>
         </div>
+        <p class="muted" id="pvWarning">长留言在大屏会自动缩小字号；仍放不下时需要滚动阅读。发布前请检查全文，重要地点和时间建议放在开头。</p>
+        <details class="preview-full">
+          <summary>阅读完整留言</summary>
+          <h3 id="pvFullTitle"></h3>
+          <p id="pvFullBody"></p>
+        </details>
       </section>
       <section class="panel ann-list" aria-labelledby="annListTitle">
         <div class="panel-head"><h2 id="annListTitle">最近留言</h2></div>
@@ -319,18 +325,18 @@
   </footer>
 </div>
 
-<dialog id="pwdDialog">
+<dialog id="pwdDialog" aria-labelledby="pwdChangeTitle">
   <form id="pwdChangeForm" class="dlg-in">
-    <h2>修改密码</h2>
-    <label class="field"><span>当前密码</span><input type="password" id="curPwd" autocomplete="current-password" required></label>
-    <label class="field"><span>新密码 <em>至少 8 位</em></span><input type="password" id="nxtPwd" autocomplete="new-password" required minlength="8"></label>
+    <h2 id="pwdChangeTitle">修改密码</h2>
+    <label class="field"><span>当前密码</span><input type="password" id="curPwd" autocomplete="current-password" aria-describedby="pwdChangeErr" required></label>
+    <label class="field"><span>新密码 <em>至少 8 位</em></span><input type="password" id="nxtPwd" autocomplete="new-password" aria-describedby="pwdChangeErr" required minlength="8"></label>
     <p id="pwdChangeErr" class="note bad" role="alert" hidden></p>
     <div class="dlg-foot"><button type="button" class="btn btn-secondary" id="pwdCancel">取消</button><button type="submit" class="btn btn-primary" id="pwdSave"><span>保存</span></button></div>
   </form>
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="ui.js?v=2.1.5"></script>
-<script src="teacher.js?v=2.1.5"></script>
+<script src="ui.js?v=2.1.6"></script>
+<script src="teacher.js?v=2.1.6"></script>
 </body>
 </html>

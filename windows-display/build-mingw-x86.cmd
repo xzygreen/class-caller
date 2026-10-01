@@ -13,7 +13,12 @@ rem mingw-w64 12 起默认改链 UCRT，GCC 15+ 用 -mcrtdll=msvcrt-os 选回 ms
 set CRT_FLAGS=
 i686-w64-mingw32-gcc.exe --help=target 2>nul | findstr /c:"-mcrtdll=" >nul && set CRT_FLAGS=-mcrtdll=msvcrt-os
 
+where i686-w64-mingw32-objdump.exe >nul 2>nul || (
+  echo Required PE inspector i686-w64-mingw32-objdump.exe was not found in PATH.
+  exit /b 1
+)
 if not exist build mkdir build
+if exist build\display.exe del build\display.exe
 pushd src
 i686-w64-mingw32-windres.exe --input display.rc --output ..\build\display-res.o --output-format coff --target pe-i386
 if errorlevel 1 (
@@ -23,17 +28,23 @@ if errorlevel 1 (
 popd
 i686-w64-mingw32-gcc.exe -std=c11 -O2 -Wall -Wextra -municode -mwindows -static %CRT_FLAGS% ^
   -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 ^
-  -Wl,--subsystem,windows:6.01 -o build\display.exe src\display.c build\display-res.o ^
+  -Wl,--subsystem,windows:6.01 -o build\display-unchecked.exe src\display.c build\display-res.o ^
   -lwinhttp -lgdi32 -lmsimg32 -luser32 -lshell32 -ladvapi32
 if errorlevel 1 exit /b %errorlevel%
 
-echo.
-echo Built: %CD%\build\display.exe
-where i686-w64-mingw32-objdump.exe >nul 2>nul && (
-  i686-w64-mingw32-objdump.exe -f build\display.exe
-  i686-w64-mingw32-objdump.exe -p build\display.exe | findstr /i /c:"ucrtbase.dll" /c:"api-ms-win-crt-" >nul && (
-    echo ERROR: display.exe depends on the Universal CRT and will not start on a stock Windows 7 SP1.
-    exit /b 1
-  )
-)
+i686-w64-mingw32-objdump.exe -p build\display-unchecked.exe >build\display-imports.txt
+if errorlevel 1 goto rejected
+findstr /i /c:"ucrtbase.dll" /c:"api-ms-win-crt-" build\display-imports.txt >nul
+if not errorlevel 1 goto rejected
+findstr /i /c:"msvcrt.dll" build\display-imports.txt >nul
+if errorlevel 1 goto rejected
+move /y build\display-unchecked.exe build\display.exe >nul
+if errorlevel 1 exit /b 1
+i686-w64-mingw32-objdump.exe -f build\display.exe
 certutil -hashfile build\display.exe SHA256
+exit /b %errorlevel%
+
+:rejected
+del build\display-unchecked.exe >nul 2>nul
+echo ERROR: Win7 build requires verified msvcrt.dll imports and must not import UCRT.
+exit /b 1

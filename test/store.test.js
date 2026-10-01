@@ -15,10 +15,11 @@ setSink(() => {});
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cc-store-'));
 
-test('数据仓库：首次创建、权限 0600、原子写入、串行更新', async () => {
+test('数据仓库：首次创建、权限 0600、原子写入、串行更新', async (t) => {
   const dir = tmp();
   const file = path.join(dir, 'db.json');
   const store = new JsonStore(file);
+  t.after(async () => { await store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   assert.ok(fs.existsSync(file));
   assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
   assert.strictEqual(store.get().version, 1);
@@ -26,13 +27,13 @@ test('数据仓库：首次创建、权限 0600、原子写入、串行更新', 
   assert.deepStrictEqual(results, [1, 2, 3, 4, 5]);
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).users.length, 5);
   assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith('.tmp')), '没有残留临时文件');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('数据仓库：mutator 抛错或写盘失败时内存回滚到上一份有效数据', async () => {
+test('数据仓库：mutator 抛错或写盘失败时内存回滚到上一份有效数据', async (t) => {
   const dir = tmp();
   const file = path.join(dir, 'db.json');
   const store = new JsonStore(file);
+  t.after(async () => { await store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   await store.update((db) => { db.users.push({ id: 'keep' }); });
   await assert.rejects(store.update((db) => { db.users.push({ id: 'bad' }); throw new Error('boom'); }), /boom/);
   assert.deepStrictEqual(store.get().users.map((u) => u.id), ['keep']);
@@ -45,14 +46,14 @@ test('数据仓库：mutator 抛错或写盘失败时内存回滚到上一份有
   // 之后队列仍可用
   await store.update((db) => { db.users.push({ id: 'after' }); });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).users.map((u) => u.id), ['keep', 'after']);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('数据仓库：旧版本文件自动补齐集合并升级版本号；更高版本拒绝载入；每日备份', async () => {
+test('数据仓库：旧版本文件自动补齐集合并升级版本号；更高版本拒绝载入；每日备份', async (t) => {
   const dir = tmp();
   const file = path.join(dir, 'db.json');
   fs.writeFileSync(file, JSON.stringify({ version: 0, users: [{ id: 'u' }] }));
   const store = new JsonStore(file);
+  t.after(async () => { await store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   assert.strictEqual(store.get().version, 1);
   assert.deepStrictEqual(store.get().classes, []);
   assert.deepStrictEqual(store.get().users, [{ id: 'u' }]);
@@ -63,9 +64,9 @@ test('数据仓库：旧版本文件自动补齐集合并升级版本号；更�
   await store.update((db) => { db.users.push({ id: 'w' }); });
   assert.strictEqual(fs.readdirSync(path.join(dir, 'backups')).length, 1, '同一天只备份一次');
 
+  await store.close();
   fs.writeFileSync(file, JSON.stringify({ ...emptyDb(), version: 99 }));
   assert.throws(() => new JsonStore(file), /版本/);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('密码摘要：scrypt 加盐，可验证，不可逆；临时密码足够长', async () => {
@@ -118,10 +119,16 @@ test('旧版 students.json 可导入：忽略密码，保留班级与名单', ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('本地 students.json（若存在）仍可被导入', () => {
-  const file = path.join(__dirname, '..', 'students.json');
-  if (!fs.existsSync(file)) return;
+test('合成旧名单导入覆盖多个班级，不读取开发者或生产 students.json', (t) => {
+  const dir = tmp();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'students.json');
+  fs.writeFileSync(file, JSON.stringify({ version: 2, classes: [
+    { id: 'synthetic-1', name: '合成一班', students: ['合成甲', '合成乙'], password: 'discard-me' },
+    { id: 'synthetic-2', name: '合成二班', students: ['合成丙'], password: 'also-discard' },
+  ] }));
   const classes = importLegacyConfig(file);
-  assert.ok(classes.length >= 1);
-  assert.ok(classes.every((c) => c.students.length > 0 && c.password === undefined));
+  assert.strictEqual(classes.length, 2);
+  assert.deepStrictEqual(classes.map((c) => c.students), [['合成甲', '合成乙'], ['合成丙']]);
+  assert.ok(classes.every((c) => c.password === undefined));
 });

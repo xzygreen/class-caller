@@ -8,9 +8,13 @@
 #define UNICODE
 #define _UNICODE
 
+#ifdef CC_NATIVE_CONTRACT_TEST
+#include "../../test/native/portable-win-types.h"
+#else
 #include <windows.h>
 #include <winhttp.h>
 #include <strsafe.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,8 +24,10 @@
 #define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
 #endif
 
+#ifdef _MSC_VER
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "winhttp.lib")
+#endif
 
 #define CC_PATH_CHARS MAX_PATH
 #define CC_MAX_PAYLOAD_CHARS 8192
@@ -31,6 +37,7 @@
 #define CC_MAX_STATE_IDS 256
 #define CC_STATE_HEADER "classcaller-state-v1\n"
 #define CC_UUID_CHARS 36
+#define CC_CLASS_ID_CHARS 32
 #define CC_DIRECT_FUTURE_SKEW_MS 5000ULL
 #define CC_MIN_FRESH_SECONDS 5UL
 #define CC_MAX_FRESH_SECONDS 300UL
@@ -52,6 +59,7 @@ typedef struct Config {
 } Config;
 
 typedef struct PayloadInfo {
+    char class_id[CC_CLASS_ID_CHARS + 1];
     char delivery_id[CC_UUID_CHARS + 1];
     char record_id[CC_UUID_CHARS + 1];
     ULONGLONG issued_at;
@@ -71,7 +79,8 @@ typedef struct StateData {
 } StateData;
 
 typedef struct WatchEnvelope {
-    char type[8];
+    char type[16];
+    char class_id[CC_CLASS_ID_CHARS + 1];
     char delivery_id[CC_UUID_CHARS + 1];
     char launch_payload[CC_MAX_PAYLOAD_CHARS + 1];
     ULONGLONG launch_valid_until;
@@ -98,6 +107,12 @@ typedef struct SseParser {
     const Config *config;
 } SseParser;
 
+static int copy_wide(WCHAR *destination, SIZE_T capacity, const WCHAR *source)
+{
+    return SUCCEEDED(StringCchCopyW(destination, capacity, source));
+}
+
+#ifndef CC_NATIVE_CONTRACT_TEST
 static volatile LONG g_stop_requested = 0;
 
 static void print_usage(void)
@@ -130,11 +145,6 @@ static void print_windows_error(const WCHAR *operation, DWORD error)
         fwprintf(stderr, L"classcaller-launcher: %ls failed (%lu)\n",
             operation, (unsigned long)error);
     }
-}
-
-static int copy_wide(WCHAR *destination, SIZE_T capacity, const WCHAR *source)
-{
-    return SUCCEEDED(StringCchCopyW(destination, capacity, source));
 }
 
 static int append_wide(WCHAR *destination, SIZE_T capacity, const WCHAR *source)
@@ -323,6 +333,20 @@ static int load_config(const WCHAR *requested_path, Config *config)
     if (file_attributes_match(config->state_path, 1)) {
         fwprintf(stderr, L"classcaller-launcher: state_path must be a file path, not a directory\n");
         return 0;
+    }
+    return 1;
+}
+
+#endif /* !CC_NATIVE_CONTRACT_TEST: Windows configuration */
+
+/* Same identity contract as CLASS_ID_RE on the server; never truncate. */
+static int class_id_valid_ascii(const char *id)
+{
+    SIZE_T i, length = strlen(id);
+    if (length == 0 || length > CC_CLASS_ID_CHARS) return 0;
+    for (i = 0; i < length; ++i) {
+        int alnum = (id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9');
+        if (i == 0 ? !alnum : !(alnum || id[i] == '-')) return 0;
     }
     return 1;
 }
@@ -874,6 +898,11 @@ static int parse_payload_json(const unsigned char *json, SIZE_T length, PayloadI
             bit = 32U;
             if (!json_parse_string(&parser, message, 61, &units)
                 || units > 60 || text_has_control(message)) goto invalid;
+        } else if (wcscmp(key, L"classId") == 0) {
+            bit = 64U;
+            if (!json_parse_string(&parser, value, sizeof(value) / sizeof(value[0]), NULL)
+                || !wide_ascii_copy(value, info->class_id, sizeof(info->class_id))
+                || !class_id_valid_ascii(info->class_id)) goto invalid;
         } else {
             parser.error = "unknown payload field";
             goto invalid;
@@ -896,7 +925,7 @@ static int parse_payload_json(const unsigned char *json, SIZE_T length, PayloadI
         goto invalid;
     }
     json_skip_space(&parser);
-    if (parser.pos != parser.length || seen != 63U
+    if (parser.pos != parser.length || seen != 127U
         || !uuid_v4_valid_ascii(info->delivery_id) || !uuid_v4_valid_ascii(info->record_id)
         || info->issued_at == 0) {
         parser.error = "payload fields are incomplete or invalid";
@@ -932,6 +961,7 @@ static int validate_encoded_payload(const char *encoded, PayloadInfo *info)
     return valid;
 }
 
+#ifndef CC_NATIVE_CONTRACT_TEST
 static ULONGLONG unix_time_milliseconds(void)
 {
     FILETIME file_time;
@@ -1348,6 +1378,8 @@ static int unregister_protocol(void)
     return CC_EXIT_OK;
 }
 
+#endif /* !CC_NATIVE_CONTRACT_TEST: Windows delivery and registry */
+
 static int uri_to_payload(const WCHAR *uri, char *payload, SIZE_T capacity)
 {
     const WCHAR *prefix;
@@ -1412,6 +1444,12 @@ static int parse_watch_envelope(const char *json_text, SIZE_T length, WatchEnvel
                     sizeof(wide_value) / sizeof(wide_value[0]), NULL)
                 || !wide_ascii_copy(wide_value, envelope->delivery_id,
                     sizeof(envelope->delivery_id))) goto malformed;
+        } else if (wcscmp(key, L"classId") == 0) {
+            bit = 32U;
+            if (!json_parse_string(&parser, wide_value,
+                    sizeof(wide_value) / sizeof(wide_value[0]), NULL)
+                || !wide_ascii_copy(wide_value, envelope->class_id, sizeof(envelope->class_id))
+                || !class_id_valid_ascii(envelope->class_id)) goto malformed;
         } else if (wcscmp(key, L"launchValidUntil") == 0) {
             bit = 2U;
             if (!json_parse_uint64(&parser, &envelope->launch_valid_until)) goto malformed;
@@ -1445,8 +1483,9 @@ static int parse_watch_envelope(const char *json_text, SIZE_T length, WatchEnvel
     json_skip_space(&parser);
     if (parser.pos != parser.length) goto malformed;
     if (seen == 0) return 0;
-    if ((seen & 16U) != 0 && strcmp(envelope->type, "clear") == 0) return 0;
-    if (seen != 31U || strcmp(envelope->type, "call") != 0
+    if ((seen & 16U) != 0 && (strcmp(envelope->type, "clear") == 0
+        || strcmp(envelope->type, "announcement") == 0)) return 0;
+    if (seen != 63U || strcmp(envelope->type, "call") != 0
         || !uuid_v4_valid_ascii(envelope->delivery_id)
         || envelope->launch_payload[0] == '\0') goto malformed;
     return 1;
@@ -1456,31 +1495,41 @@ malformed:
     return -1;
 }
 
-static int handle_watch_frame(const Config *config, const char *data, SIZE_T length)
+/* Returns 1 for a validated call, 0 for non-launch snapshots, -1 for invalid input. */
+static int validate_watch_payload(const char *data, SIZE_T length, WatchEnvelope *envelope, PayloadInfo *info)
 {
-    WatchEnvelope envelope;
-    PayloadInfo info;
     int parsed;
     ULONGLONG minimum_until;
     ULONGLONG maximum_until;
 
-    parsed = parse_watch_envelope(data, length, &envelope);
-    if (parsed <= 0) return parsed == 0 ? CC_EXIT_OK : CC_EXIT_INPUT;
-    if (!validate_encoded_payload(envelope.launch_payload, &info)) return CC_EXIT_INPUT;
-    if (_stricmp(info.delivery_id, envelope.delivery_id) != 0) {
-        fwprintf(stderr, L"classcaller-launcher: SSE and payload deliveryId values differ\n");
-        return CC_EXIT_INPUT;
+    parsed = parse_watch_envelope(data, length, envelope);
+    if (parsed <= 0) return parsed;
+    if (!validate_encoded_payload(envelope->launch_payload, info)) return -1;
+    if (_stricmp(info->delivery_id, envelope->delivery_id) != 0
+        || strcmp(info->class_id, envelope->class_id) != 0) {
+        fwprintf(stderr, L"classcaller-launcher: SSE and payload identity values differ\n");
+        return -1;
     }
-    minimum_until = info.issued_at + CC_MIN_FRESH_SECONDS * 1000ULL;
-    maximum_until = info.issued_at + CC_MAX_FRESH_SECONDS * 1000ULL;
-    if (minimum_until < info.issued_at || maximum_until < info.issued_at
-        || envelope.server_time < info.issued_at
-        || envelope.launch_valid_until < minimum_until
-        || envelope.launch_valid_until > maximum_until
-        || envelope.server_time > envelope.launch_valid_until) {
+    minimum_until = info->issued_at + CC_MIN_FRESH_SECONDS * 1000ULL;
+    maximum_until = info->issued_at + CC_MAX_FRESH_SECONDS * 1000ULL;
+    if (minimum_until < info->issued_at || maximum_until < info->issued_at
+        || envelope->server_time < info->issued_at
+        || envelope->launch_valid_until < minimum_until
+        || envelope->launch_valid_until > maximum_until
+        || envelope->server_time > envelope->launch_valid_until) {
         fwprintf(stderr, L"classcaller-launcher: ignored stale or inconsistent launcher SSE event\n");
-        return CC_EXIT_INPUT;
+        return -1;
     }
+    return 1;
+}
+
+#ifndef CC_NATIVE_CONTRACT_TEST
+static int handle_watch_frame(const Config *config, const char *data, SIZE_T length)
+{
+    WatchEnvelope envelope;
+    PayloadInfo info;
+    int parsed = validate_watch_payload(data, length, &envelope, &info);
+    if (parsed <= 0) return parsed == 0 ? CC_EXIT_OK : CC_EXIT_INPUT;
     return deliver_payload(config, envelope.launch_payload, &info);
 }
 
@@ -1786,6 +1835,8 @@ static int watch_stream(const Config *config, const WCHAR *url_text)
     return CC_EXIT_OK;
 }
 
+#endif /* !CC_NATIVE_CONTRACT_TEST: Windows watcher */
+
 static int payload_argument_ascii(const WCHAR *argument, char *payload, SIZE_T capacity)
 {
     SIZE_T i;
@@ -1801,6 +1852,7 @@ static int payload_argument_ascii(const WCHAR *argument, char *payload, SIZE_T c
     return 1;
 }
 
+#ifndef CC_NATIVE_CONTRACT_TEST
 int wmain(int argc, WCHAR **argv)
 {
     const WCHAR *config_path;
@@ -1877,3 +1929,4 @@ int wmain(int argc, WCHAR **argv)
     }
     return deliver_payload(&config, payload, &info);
 }
+#endif /* !CC_NATIVE_CONTRACT_TEST */

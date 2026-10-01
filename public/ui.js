@@ -136,8 +136,11 @@ function errorState(text, retry) {
 function fill(box, ...nodes) { box.innerHTML = ''; box.append(...nodes); }
 
 /* ---------- 产品内对话框：替代浏览器原生 confirm / prompt ---------- */
+let dialogSequence = 0;
 function makeDialog(cls) {
   const d = el('dialog', cls || '');
+  d.id = 'caller-dialog-' + (++dialogSequence);
+  d.setAttribute('aria-labelledby', d.id + '-title');
   document.body.append(d);
   d.addEventListener('close', () => setTimeout(() => d.remove(), 300));
   return d;
@@ -152,7 +155,7 @@ function confirmDialog(o) {
     const d = makeDialog();
     const box = el('form', 'dlg-in' + (o.danger ? ' danger' : ''));
     box.method = 'dialog';
-    const h = el('h2');
+    const h = el('h2'); h.id = d.id + '-title';
     h.append(icon(o.icon || (o.danger ? 'alert' : 'info')), o.title);
     box.append(h);
     if (o.text) box.append(el('p', '', o.text));
@@ -182,7 +185,7 @@ function choiceDialog(o) {
   return new Promise((resolve) => {
     const d = makeDialog();
     const box = el('div', 'dlg-in');
-    const h = el('h2'); h.append(icon(o.icon || 'info'), o.title); box.append(h);
+    const h = el('h2'); h.id = d.id + '-title'; h.append(icon(o.icon || 'info'), o.title); box.append(h);
     if (o.text) box.append(el('p', '', o.text));
     const list = el('div', 'dlg-choices');
     let answer = null;
@@ -211,7 +214,7 @@ function promptDialog(o) {
   return new Promise((resolve) => {
     const d = makeDialog();
     const box = el('form', 'dlg-in');
-    const h = el('h2'); h.append(icon(o.icon || 'edit'), o.title); box.append(h);
+    const h = el('h2'); h.id = d.id + '-title'; h.append(icon(o.icon || 'edit'), o.title); box.append(h);
     if (o.text) box.append(el('p', '', o.text));
     const f = el('label', 'field');
     f.append(el('span', '', o.label || ''));
@@ -224,6 +227,10 @@ function promptDialog(o) {
     input.required = Boolean(o.required);
     f.append(input);
     const err = el('small', '');
+    err.id = d.id + '-error';
+    err.setAttribute('role', 'alert');
+    input.setAttribute('aria-describedby', err.id);
+    input.oninput = () => { err.textContent = ''; input.removeAttribute('aria-invalid'); };
     err.style.color = 'var(--alert)';
     f.append(err);
     if (o.hint) f.append(el('small', '', o.hint));
@@ -247,30 +254,60 @@ function promptDialog(o) {
   });
 }
 
-/** 右侧抽屉（手机上是底部面板）：放新建、编辑等表单任务 */
+/** 右侧抽屉。onSubmit 返回 true 关闭；{ error, fields?: [name] } 留在表单内恢复。 */
 function openDrawer({ title, body, submit, onSubmit, danger }) {
   const d = makeDialog('drawer');
   const form = el('form');
   form.style.display = 'contents';
   const head = el('div', 'drawer-head');
-  head.append(el('h2', '', title));
+  const heading = el('h2', '', title); heading.id = d.id + '-title';
+  head.append(heading);
   const x = el('button', 'icon-btn'); x.type = 'button'; x.setAttribute('aria-label', '关闭'); x.append(icon('x'));
   x.onclick = () => d.close();
   head.append(x);
   const main = el('div', 'drawer-body');
-  main.append(body);
+  const error = el('p', 'note bad');
+  error.id = d.id + '-error'; error.hidden = true; error.tabIndex = -1;
+  error.setAttribute('role', 'alert');
+  main.append(body, error);
   const foot = el('div', 'drawer-foot');
   const no = el('button', 'btn btn-secondary', '取消'); no.type = 'button'; no.onclick = () => d.close();
   const yes = el('button', 'btn ' + (danger ? 'btn-danger' : 'btn-primary'), submit || '保存');
   foot.append(no, yes);
   form.append(head, main, foot);
   d.append(form);
+  let submitting = false;
+  const invalid = new Map();
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    submitting = true;
+    error.hidden = true; error.textContent = '';
+    form.removeAttribute('aria-describedby');
+    for (const [field, describedBy] of invalid) {
+      field.removeAttribute('aria-invalid');
+      if (describedBy) field.setAttribute('aria-describedby', describedBy); else field.removeAttribute('aria-describedby');
+    }
+    invalid.clear();
     setBusy(yes, true);
-    let ok = false;
-    try { ok = await onSubmit(form); } finally { setBusy(yes, false); }
-    if (ok) d.close();
+    let result;
+    try { result = await onSubmit(form); }
+    catch { result = { error: '保存失败，请检查网络后重试。输入内容已保留。' }; }
+    finally { submitting = false; setBusy(yes, false); }
+    if (!d.open) return;
+    if (result === true) { d.close(); return; }
+    error.textContent = (result && result.error) || '保存未完成，请检查输入后重试。';
+    error.hidden = false;
+    form.setAttribute('aria-describedby', error.id);
+    for (const name of (result && result.fields) || []) {
+      const field = form.elements.namedItem(name);
+      if (!field || !field.setAttribute) continue;
+      const describedBy = field.getAttribute('aria-describedby') || '';
+      invalid.set(field, describedBy);
+      field.setAttribute('aria-invalid', 'true');
+      field.setAttribute('aria-describedby', [describedBy, error.id].filter(Boolean).join(' '));
+    }
+    error.focus();
   };
   d.showModal();
   const first = main.querySelector('input, select, textarea');

@@ -126,6 +126,12 @@ fi
 echo "==> 安装到 $APP_DIR"
 mkdir -p "$APP_DIR"
 
+# 安装、备份和首次初始化之前停止旧进程；不能让两个 JSON 内存副本同时写库。
+if systemctl cat class-caller.service >/dev/null 2>&1; then
+  echo "==> 停止服务以独占数据仓库"
+  systemctl stop class-caller
+fi
+
 # 数据目录：账号、名单、记录都在这里，升级绝不覆盖；先备份一份
 mkdir -p "$DATA_DIR"
 if [ -f "$DATA_DIR/db.json" ]; then
@@ -149,7 +155,7 @@ if [ ! -f "$APP_DIR/students.json" ] && [ -f "$SOURCE_DIR/students.json" ] && [ 
   echo "    已安装初始 students.json（仅用于首次导入名单）"
 fi
 
-for doc in README.md docs/windows-launcher.md docs/windows-display.md docs/upgrade-multiclass.md docs/upgrade-accounts.md; do
+for doc in README.md PRIVACY.md LICENSE NOTICE.md PRODUCT.md docs/windows-launcher.md docs/windows-display.md docs/upgrade-multiclass.md docs/upgrade-accounts.md; do
   if [ -f "$SOURCE_DIR/$doc" ]; then
     mkdir -p "$APP_DIR/$(dirname "$doc")"
     install -m 0644 "$SOURCE_DIR/$doc" "$APP_DIR/$doc"
@@ -187,8 +193,23 @@ install -m 0644 "$UNIT_FILE" /etc/systemd/system/class-caller.service
 rm -f "$UNIT_FILE"
 trap - EXIT
 systemctl daemon-reload
+
+# 首个管理员必须在启动服务之前创建。init-admin 自身也会拒绝任何活动写者。
+ADMIN_STATE="$("$NODE_BIN" -e '
+  const fs = require("fs");
+  const file = process.argv[1];
+  const db = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { users: [] };
+  console.log(db.users.some(u => u.role === "admin" && u.status === "active") ? "ready" : "missing");
+' "$DATA_DIR/db.json")"
+if [ "$ADMIN_STATE" = "missing" ]; then
+  echo "==> 服务保持停止，先创建首个管理员"
+  if [ ! -t 0 ] && { [ -z "${ADMIN_USERNAME:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; }; then
+    fail "未提供管理员凭据。请交互式重跑部署，或先运行 sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN $APP_DIR/scripts/init-admin.js；完成后再启动服务。"
+  fi
+  ADMIN_NAME="${ADMIN_NAME:-管理员}" runuser -u "$APP_USER" -- env DATA_DIR="$DATA_DIR" "$NODE_BIN" "$APP_DIR/scripts/init-admin.js"
+fi
 systemctl enable class-caller
-systemctl restart class-caller
+systemctl start class-caller
 
 echo "==> 回环地址联通性自检"
 healthy=0
@@ -207,15 +228,14 @@ else
 fi
 
 if curl -fsS "http://127.0.0.1:$PORT/api/public/status" | grep -q '"setupRequired":true'; then
-  echo
-  echo "    !! 尚未创建管理员。请立即执行（密码不会被记录）："
-  echo "       cd $APP_DIR && sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN scripts/init-admin.js"
+  systemctl stop class-caller
+  fail "启动后仍缺少管理员，服务已停止。请先运行 init-admin，成功后再启动服务。"
 fi
 
 systemctl --no-pager --lines=5 status class-caller
 echo
 echo "完成。接下来："
-echo "  1. 创建首个管理员（若上面提示未创建）：cd $APP_DIR && sudo -u $APP_USER DATA_DIR=$DATA_DIR $NODE_BIN scripts/init-admin.js"
+echo "  1. 首个管理员已就绪；需要离线恢复时，务必先 systemctl stop class-caller，再运行 init-admin，成功后 systemctl start class-caller"
 echo "  2. 打开 https://你的域名/admin 维护班级、名单、作息，审批教师申请"
 echo "  3. 用新版 $SOURCE_DIR/nginx.conf.example 更新 Nginx（必须 auth_basic off，SSE 必须关闭缓冲）"
 echo "  4. 看日志：journalctl -u class-caller -f"

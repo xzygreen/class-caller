@@ -5,6 +5,10 @@
 #   2. Node 只监听 127.0.0.1，公网只能经由这里进来
 #   3. 登录使用 HttpOnly Cookie：务必透传 X-Forwarded-Proto，应用据此给 Cookie 加 Secure
 
+# 站点文件由 http {} include；配额按真实来源计算。若在 CDN 后面，先仅对可信 CDN 网段配置 real_ip。
+limit_conn_zone $binary_remote_addr zone=caller_stream_ip:10m;
+limit_conn_zone $server_name zone=caller_stream_server:1m;
+
 # ---------- HTTP：只做跳转 ----------
 server {
     listen 80;
@@ -42,6 +46,10 @@ server {
     # ---------- SSE 事件流：这段是重点 ----------
     # 大屏：/api/classes/class-a/public/stream；教师端实时：/api/classes/class-a/stream（需登录 Cookie）
     location ~ ^/api/classes/[a-z0-9-]+/(public/)?stream$ {
+        limit_conn caller_stream_ip 64;
+        limit_conn caller_stream_server 1024;
+        limit_conn_status 429;
+        send_timeout 30s;
         auth_basic off;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;

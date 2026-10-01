@@ -1,32 +1,46 @@
 @echo off
-rem 把 D 盘的 display.exe 注册为“当前用户登录时自动启动”。
-rem 同时写两处（任务计划 + HKCU Run），任一生效即可。
-rem 注意：这两处都保存在 C 盘/注册表里，学校若每次重启还原 C 盘，需要把本脚本
-rem 放进母盘、登录脚本或 GPO 里重新执行（见 docs/windows-display.md 第 4 节）。
+rem Prefer one scheduled task; fall back to HKCU Run only if task creation fails.
+rem Both mechanisms use --autostart: repeated automatic starts never restore the window.
+rem Entries live on C: even when the executable is on D:; see the deployment guide.
 setlocal
 set "EXE=%~dp0display.exe"
+set "RUNKEY=HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 if not exist "%EXE%" (
   echo Missing: %EXE%
-  pause
   exit /b 1
 )
 
 schtasks /Create /F /SC ONLOGON /RL LIMITED /TN "ClassCallerDisplay" ^
-  /TR "\"%EXE%\"" >nul 2>nul
-if errorlevel 1 (
-  echo schtasks failed, falling back to HKCU Run key only.
-) else (
-  echo Scheduled task "ClassCallerDisplay" created (runs at logon).
-)
+  /TR "\"%EXE%\" --autostart" >nul 2>nul
+if errorlevel 1 goto fallback
 
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ClassCallerDisplay ^
-  /t REG_SZ /d "\"%EXE%\"" /f >nul
+rem Remove the legacy duplicate registration after the task has been installed.
+reg query "%RUNKEY%" /v ClassCallerDisplay >nul 2>nul
+if errorlevel 1 goto task_done
+reg delete "%RUNKEY%" /v ClassCallerDisplay /f >nul 2>nul
 if errorlevel 1 (
-  echo Failed to write HKCU Run key.
-) else (
-  echo HKCU Run key written.
+  echo Failed to remove the legacy HKCU Run entry. No successful migration reported.
+  echo Remove ClassCallerDisplay from HKCU Run and rerun this script.
+  exit /b 1
 )
+:task_done
+echo Scheduled task ClassCallerDisplay installed. HKCU Run is not used.
+exit /b 0
 
-echo.
-echo Done. display.exe will start automatically at next logon.
-pause
+:fallback
+rem A previous task may still exist after a failed update. Do not leave two owners.
+schtasks /Query /TN "ClassCallerDisplay" >nul 2>nul
+if errorlevel 1 goto write_run
+schtasks /Delete /F /TN "ClassCallerDisplay" >nul 2>nul
+if errorlevel 1 (
+  echo Could not remove the old scheduled task. HKCU Run was not added.
+  exit /b 1
+)
+:write_run
+reg add "%RUNKEY%" /v ClassCallerDisplay /t REG_SZ /d "\"%EXE%\" --autostart" /f >nul
+if errorlevel 1 (
+  echo Failed to write HKCU Run. Autostart installation failed.
+  exit /b 1
+)
+echo Scheduled task unavailable; installed HKCU Run only.
+exit /b 0

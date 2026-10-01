@@ -15,7 +15,7 @@
 | 状态 | 行为 |
 | --- | --- |
 | 启动 | 读取旁边的 `display.ini`，以**最大化的普通窗口**打开（右上角有标准的最小化/最大化/关闭三个按钮），顶栏显示班级名与**班级编号**、时钟和连接状态，中央是大时钟、日期和班级名（方便巡检设备绑定是否正确，没有“等待点名”之类的文字）。`fullscreen=1` 或按 `F11` 可切换为无边框铺满屏幕。 |
-| 连接 | 后台线程用 WinHTTP（强制 TLS 1.2，自动沿用当前用户的 IE/系统代理设置）长连 `https://域名/api/classes/<class_id>/public/stream?role=display`，断线后按服务端 `retry` 值（2 秒）自动重连；新连接会立即收到当前状态。每一帧快照都带 `classId`，与本机 `class_id` 不一致的帧一律丢弃并写日志，服务端异常也不会串班显示。 |
+| 连接 | 后台线程用 WinHTTP（优先启用 TLS 1.2；支持静态代理，不解析 PAC/WPAD，详见第 8.2 节）长连 `https://域名/api/classes/<class_id>/public/stream?role=display`，断线后按服务端 `retry` 值（2 秒）自动重连；新连接会立即收到当前状态。每一帧快照都带 `classId`，与本机 `class_id` 不一致的帧一律丢弃并写日志；仍需人工核对设备绑定的班级与教室一致。 |
 | 收到新通知 | 自动恢复（若被最小化）、置顶、抢前台，全屏显示姓名（自动选列数与字号，最多 20 人）和金色附加消息，播放两声提示音。 |
 | 收到班级留言 | 同样前置并响铃，但改用留言版式：顶部「班级留言」（紧急广播为红色「紧急通知」）、居中大字标题、自动换行的正文、右下角发布人（如「数学老师 · 张老师」）。没有「收到」按钮，点击画面不会发出任何请求。 |
 | 多条内容排队 | 服务端按优先级（紧急 → 定时提醒 → 手动点人 → 留言）逐条显示；快照里的 `queued` 大于 0 时底部提示「还有 N 条内容等待显示」。 |
@@ -24,7 +24,7 @@
 | 班级绑定错误 | 服务器上没有 `class_id` 对应的班级（HTTP 404 `CLASS_NOT_FOUND`），或返回的 `classId` 与本机不符：顶栏和中央显示醒目的红色「班级绑定错误」，窗口标题变为“班级绑定错误 · 老师找人通知大屏”，**不显示任何通知**，直到改正 `display.ini` 并重启程序。 |
 | 清屏 | 回到时钟待机；若 `always_topmost=0` 会退出置顶层，不影响老师继续用电脑。 |
 | 老师操作 | 点右上角 **×** 或按 `Esc` 只是**最小化**（下次通知自动弹回），不会退出；真正退出用 `Ctrl+Q` 或**按住 Ctrl 点 ×**。窗口标题栏只显示程序名，没有任何操作提示文字。`F11` 切换全屏/窗口，`M` 切换提示音，`T` 切换常驻置顶。鼠标静止 2.6 秒自动隐藏。 |
-| 再次运行 | 第二次执行 `display.exe` 不会开第二个窗口，只会把已有窗口拉到最前——可以当“唤醒”脚本用。 |
+| 再次运行 | 手动第二次执行 `display.exe` 不会开第二个窗口，只会把已有窗口拉到最前——可以当“唤醒”脚本用。自动启动使用 `--autostart`：首次最小化，已有实例时安静退出，不恢复窗口。 |
 
 它通过 `?role=display` 连接，因此教师端“状态”里的**大屏在线数**会把 exe 正常计入。
 
@@ -47,7 +47,7 @@ cd windows-display
 build-mingw-x86.cmd
 ```
 
-**C 运行库必须是系统自带的 `msvcrt.dll`。**Windows 7 SP1 原版镜像没有 Universal CRT（`ucrtbase.dll` / `api-ms-win-crt-*.dll`），而 mingw-w64 12 起（Homebrew 现版本，GCC 15+）默认改链 UCRT，直接编译出来的 exe 在没打过 KB2999226 的 Windows 7 上根本起不来。两个 MinGW 脚本会自动探测：编译器支持 `-mcrtdll` 就传 `-mcrtdll=msvcrt-os` 选回 msvcrt（老版本工具链如 Debian 的 GCC 12 本身默认 msvcrt，不需要该参数），并在产物导入了 UCRT 时直接报错退出。`npm test` 对编译产物也做同样检查。
+**C 运行库必须是系统自带的 `msvcrt.dll`。**Windows 7 SP1 原版镜像没有 Universal CRT（`ucrtbase.dll` / `api-ms-win-crt-*.dll`），而 mingw-w64 12 起（Homebrew 现版本，GCC 15+）默认改链 UCRT，直接编译出来的 exe 在没打过 KB2999226 的 Windows 7 上根本起不来。两个 MinGW 脚本会自动探测：编译器支持 `-mcrtdll` 就传 `-mcrtdll=msvcrt-os` 选回 msvcrt（老版本工具链如 Debian 的 GCC 12 本身默认 msvcrt，不需要该参数），并强制使用 `objdump` 验证导入了 MSVCRT 且没有 UCRT；检查工具缺失或检查失败时构建失败，不生成可发布的 `display.exe`。原生测试也对新鲜构建执行导入检查。
 
 ### 方案 B：MSVC
 
@@ -72,7 +72,9 @@ dumpbin /headers build\display.exe | findstr /i "machine subsystem"
 i686-w64-mingw32-objdump -f build/display.exe
 ```
 
-必须看到 `14C machine (x86)` / `pei-i386`，**不能**是 `8664` 或 PE32+。`npm test` 里的 `test/display.test.js` 在编译产物存在时也会检查 MZ/PE 头。
+必须看到 `14C machine (x86)` / `pei-i386`，**不能**是 `8664` 或 PE32+。`node --test test/display.test.js test/launcher.test.js` 会编译实际 C 解析器并消费真实服务端快照，还会在临时目录从当前源码/资源构建 EXE、检查 PE 头和导入目录，不采信现有旧产物。缺少工具明确 `skip`；CI 使用 `CC_NATIVE_REQUIRE=1` 将工具缺失变成失败。可用 `NATIVE_SANITIZE=1` 启用主机解析器 ASan/UBSan，`NATIVE_DOCKER_IMAGE=cc-mingw` 使用已准备好的 Debian 交叉编译镜像，详见 [启动器验证说明](windows-launcher.md#9-自动化验证与未覆盖的实机验收)。
+
+便携测试覆盖 call/ACK/clear/announcement、班级标识 31/32/33/超长边界、畸形 UTF-8/JSON/深度，不模拟 Win32 API。真正的 INI API、自启、窗口状态、代理网络和进程启动测试单独标记 `skip`，仍需受支持 Windows 镜像验收，不能称为 Win7 实机通过。
 
 ## 3. 放到持久的 D 盘
 
@@ -114,7 +116,7 @@ log=1
 ```
 
 - `server` 只写域名入口，不带 `/api/...`，程序自己拼 `/api/classes/<class_id>/public/stream?role=display` 与 `/api/classes/<class_id>/public/config`。
-- `class_id` 填本教室的班级标识，以管理端「班级与学生」里各班的标识为准（例如 `class-a`）。每台大屏机各填各的，**不要复制同一份 ini 到多个教室后忘记改这一行**。
+- `class_id` 填本教室的班级标识，以管理端「班级与学生」里各班的标识为准（例如 `class-a`）。必须符合 `^[a-z0-9][a-z0-9-]{0,31}$`（1–32 个 ASCII 字符）；INI 或 `--class` 超长、截断或格式错误会在联网前拒绝启动，绝不使用有效的前 32 字符代替原输入。每台大屏机各填各的，**不要复制同一份 ini 到多个教室后忘记改这一行**。
 - `always_topmost=1` 适合**专用**大屏机（永远盖在最上面）。大屏机平时还要上课用的话保持 `0`。
 - `start_minimized=1` 让开机后先缩在任务栏，收到通知才弹出。
 - `fullscreen=0`（默认）是带标题栏的最大化窗口；`1` 是无边框铺满。
@@ -126,6 +128,7 @@ D:\class-caller\display.exe --server https://example.com --class class-a
 D:\class-caller\display.exe --preview 学生130,学生131 --msg 请到办公室   rem 离线预览点人排版（含「收到」按钮），不联网
 D:\class-caller\display.exe --preview-notice "班级通知|明天统一穿校服，请带好实验报告。"   rem 离线预览留言版式
 D:\class-caller\display.exe --minimized
+D:\class-caller\display.exe --autostart                            rem 自动启动：最小化，重复启动不唤醒
 D:\class-caller\display.exe --install-autostart                     rem 写入当前用户的开机自启（见第 4 节）
 D:\class-caller\display.exe --uninstall-autostart
 ```
@@ -144,11 +147,13 @@ rem 或
 D:\class-caller\install-autostart.cmd
 ```
 
-前者由 exe 自己写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClassCallerDisplay`（值为 `"D:\class-caller\display.exe" --minimized`，登录后先缩在任务栏，收到通知才弹出）；后者额外再建一个登录时运行的计划任务 `ClassCallerDisplay`（`schtasks /SC ONLOGON /RL LIMITED`），两处都指向 D 盘的 exe。之后把这份 C 盘状态固化为还原快照，每次还原后自启仍然有效。取消：`display.exe --uninstall-autostart` 或 `uninstall-autostart.cmd`。
+前者由 exe 自己写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClassCallerDisplay`（值为 `"D:\class-caller\display.exe" --autostart`）；后者优先创建登录计划任务 `ClassCallerDisplay`（`schtasks /SC ONLOGON /RL LIMITED`），**成功后删除旧 HKCU Run 登记，只有任务创建失败才退回 Run**，不会有意同时安装两种机制。迁移旧任务或 Run 项失败会返回非零退出码，须处理错误后重试，不应视为安装成功。
+
+两种自动启动都首次最小化，已有实例时安静退出；普通手动启动仍可唤醒窗口。不要混用 exe 安装命令与计划任务方式；从旧双重登记版本升级时运行新的 `install-autostart.cmd` 清理旧项。之后把 C 盘状态固化为还原快照。取消：Run-only 可用 `display.exe --uninstall-autostart`，计划任务或旧版双登记使用 `uninstall-autostart.cmd` 清理两处。
 
 ### 4.2 域环境：GPO 登录脚本
 
-把 `D:\class-caller\start-display.cmd` 配成用户登录脚本（用户配置 → Windows 设置 → 脚本 → 登录），或者用 GPO 首选项下发上面那条 `Run` 键。
+把 `"D:\class-caller\display.exe" --autostart` 配成用户登录命令（用户配置 → Windows 设置 → 脚本 → 登录），或者用 GPO 首选项下发上面那条 `Run` 键。不要将手动唤醒脚本 `start-display.cmd` 作为重复自动启动命令。
 
 ### 4.3 无集中管理
 
@@ -189,9 +194,9 @@ exe 只使用公开接口，不需要密码：
 
 `nginx.conf.example` 已经满足要求（同时匹配公开与教师 SSE、`proxy_buffering off`、`gzip off`、24 小时超时、`auth_basic off`）。如果域名经过 Cloudflare，必须让 `/api/*` 跳过 Managed Challenge、Under Attack Mode 和 Access 登录；WinHTTP 不会执行挑战页里的 JavaScript，拿到 `403 Just a moment...` 时大屏必然离线。另一个要注意的是 **Windows 7 的 TLS**：
 
-- exe 强制 TLS 1.2。Windows 7 SP1 必须装有 TLS 1.2 相关更新（KB3140245 + 注册表启用，或已打全补丁），并信任证书链的根证书（Let's Encrypt 的 ISRG Root X1 需要系统根证书更新到 2021 年后）。
+- 程序请求启用 TLS 1.2；若系统不支持该选项，会记录 `enable TLS 1.2 failed` 并由系统默认协议继续尝试，不能据此认为该镜像已满足安全连接条件。Windows 7 SP1 必须装有 TLS 1.2 相关更新（KB3140245 + 注册表启用，或已打全补丁），并信任证书链的根证书（Let's Encrypt 的 ISRG Root X1 需要系统根证书更新到 2021 年后）。
 - Nginx 侧确认 `ssl_protocols` 包含 `TLSv1.2`，并且证书链（`fullchain.pem`）完整。
-- 校内诊断时可先在大屏机浏览器打开 `https://域名/api/classes/class-a/public/stream?role=display`，能看到 `retry: 2000` 和 `data: {...}` 即证明证书与网络没问题。
+- 校内诊断时可先在大屏机浏览器打开 `https://域名/api/classes/class-a/public/stream?role=display`；能看到 `retry: 2000` 和 `data: {...}` 只证明浏览器这条路径可用，浏览器与 WinHTTP 的代理、TLS 和证书环境仍可能不同。
 
 `class-caller.service` 不需要改。
 
@@ -203,8 +208,9 @@ exe 只使用公开接口，不需要密码：
 3. 在教师端登录**本班**发送一名测试学生：大屏 1 秒内弹出、响铃；再登录**另一个班**发送：这块屏必须毫无反应；点「收到」后按钮变「已收到」，教师端该姓名显示“已收到”；倒计时结束自动清屏。
 4. 把大屏最小化（Esc）后再发送：窗口自动恢复到最前。
 5. 大屏机断网 10 秒再恢复：顶栏红点“未连接”→ 绿点“已连接”，期间发送的通知在重连后立即显示（不重复响铃）。
-6. 重启还原 C 盘后登录：自启仍生效（验证第 4 节所选方式）。
-7. 查看 `D:\class-caller\display.log`：只应有连接状态、`class_id=…` 和 `call id=… names=N`，不含附加消息内容。
+6. 重启还原 C 盘后登录：自启仍生效（验证第 4 节所选方式）。错开数秒执行两次 `display.exe --autostart`，确认只有一个进程且在通知或普通手动启动前保持最小化；分别验证计划任务成功、任务被策略拒绝后 Run 回退、旧双登记迁移三种情况。
+7. 用专用测试 ini 与 `--class` 分别测试 31、32、33 及更长字符，尤其是有效 32 字符前缀加后缀；超长输入须在联网前报错，不应改为前缀班级。
+8. 查看 `D:\class-caller\display.log`：只应有连接状态、`class_id=…` 和 `call id=… names=N`，不含附加消息内容。
 
 ## 8. 常见故障
 
@@ -217,7 +223,7 @@ exe 只使用公开接口，不需要密码：
 | 绿点 **已连接** 但没显示姓名 | 连接正常，事件没到或被丢弃 | 教师端“状态”里大屏在线数应 ≥1；看 `display.log` 是否有 `call id=…`；若有 `ignored malformed SSE frame` 请把日志发给开发者。 |
 | **连接中** 一直不变 | 网络线程还没拿到结果 | 等 15 秒；仍不变说明 DNS/连接卡住，检查网络。 |
 | **未连接 · 错误 12007** | 域名解析失败 | `server=` 拼写、DNS。 |
-| **未连接 · 错误 12029 / 12002** | 连不上服务器 / 超时 | 防火墙、机房出口、服务器 443 端口；若学校用代理，请在 IE“Internet 选项 → 连接 → 局域网设置”里配置代理，程序会自动沿用。 |
+| **未连接 · 错误 12029 / 12002** | 连不上服务器 / 超时 | 防火墙、机房出口、服务器 443 端口；代理只支持当前用户 IE 静态代理或机器 WinHTTP 默认代理，不解析 PAC/WPAD；见第 8.2 节。 |
 | **未连接 · 错误 12175 / 12044 / 12045** | TLS 或证书不受信任 | Windows 7：安装 TLS 1.2 支持（KB3140245 并启用 DefaultSecureProtocols，或已打全 2016 年后补丁）和根证书更新（Let's Encrypt 需 ISRG Root X1）。看 `display.log` 是否有 `enable TLS 1.2 failed`。 |
 | **未连接 · 错误 12037** | 证书日期无效 | 大屏机系统时间不对。 |
 | **未连接 · 错误 404** | 班级不存在或 Nginx 没有反代该路径 | 先看中央是否显示「班级绑定错误」：是则 `class_id=` 写错；否则确认 `server=` 只有域名、没有多余路径，Nginx 有 `location ~ ^/api/classes/[a-z0-9-]+/public/stream$`。 |
@@ -230,12 +236,33 @@ exe 只使用公开接口，不需要密码：
 - **启动即弹“没有配置服务器地址”**：`display.ini` 不在 exe 旁边，或 `server=` 为空。
 - **启动即弹“此设备尚未绑定班级”**：`display.ini` 缺少 `class_id=`。这是有意为之：没有绑定的大屏不会默认进入任何班。
 - **中央显示红色「班级绑定错误」**：`class_id=` 填了服务器上不存在的班级（例如写成 `class23`、`23`、大写字母），或服务器已把该班移除。改正 ini 后重启程序；期间任何通知都不会显示。
-- **通知发到了别的教室**：不可能由 exe 造成——它只连本班的流并核对每帧 `classId`。请检查教师端顶栏“当前班级”是否选错了班。
+- **通知发到了别的教室**：先核对设备 ini / `--class` 的原始值、顶栏班级与实际教室，再核对教师端“当前班级”。程序拒收身份不匹配或过长的标识，但无法发现管理员把一个合法班级标识填到了错误教室；不能仅凭客户端校验排除配置或服务端问题。
 - **收到通知但没弹到最前，只是任务栏闪**：日志有 `foreground denied by system`。通常是有全屏游戏/受保护窗口在前；改用 `always_topmost=1`，或确认没有其他程序也在抢前台。
 - **字体发虚 / 窗口没铺满**：Win10 高 DPI 缩放下程序已声明 DPI 感知；如仍异常，检查显示设置里主显示器是否是大屏。
 - **中文显示为方块**：系统缺“微软雅黑”，GDI 会自动回退到宋体/黑体；确保系统安装了中文字体包。
 - **没有声音**：`Beep` 走声卡，大屏机静音或无音频设备时无声；不影响显示。
 - **两个窗口**：不可能——单实例互斥体保证第二次启动只是唤醒。若确实看到两个，说明运行的是两份不同名的旧版本。
+
+### 8.2 代理支持范围与静态替代配置
+
+**当前不支持 PAC（自动配置脚本）或 WPAD（自动检测）。** 即使 IE/浏览器能通过自动代理上网，原生程序也不会下载、执行 PAC 或按请求解析代理。程序对公开配置 GET、SSE 与 ACK 使用同一规则：
+
+1. 当前登录用户 IE“Internet 选项 → 连接 → 局域网设置”有**静态代理服务器**时，使用该代理及其绕过列表。
+2. 没有 IE 静态代理时，使用机器的 **WinHTTP 默认代理**（不是保证直连）。由 `netsh winhttp show proxy` 检查；默认代理为空才是直连。
+3. 检测到 IE 自动配置/自动检测时，日志提示 `PAC/WPAD is not supported`。另外记录 `using current-user IE static proxy` 或 `using machine WinHTTP default proxy`；这些是选路诊断，不表示连接已经成功。
+
+需要代理的学校请向网络管理员索取适用于 Caller 服务端的固定代理地址和绕过列表，配置当前用户 IE **静态**代理，或在没有 IE 静态代理的前提下由管理员设置机器 WinHTTP 代理。例如（示例地址必须替换，命令会影响该机器其他 WinHTTP 程序）：
+
+```bat
+netsh winhttp show proxy
+rem 先记录现有配置，避免破坏学校其他软件的联网设置
+netsh winhttp dump > D:\class-caller\winhttp-before.txt
+netsh winhttp set proxy proxy-server="http=proxy.school.example:8080;https=proxy.school.example:8080" bypass-list="<local>"
+```
+
+不要将 PAC URL 填成静态代理地址，也不要假定 `netsh winhttp import proxy source=ie` 能将 PAC 规则转换为静态代理。代理变更后重启程序，再分别验证班级名加载（GET）、在线与通知（SSE）、点击「收到」（ACK）。程序没有交互式代理登录 UI；HTTP 407 或学校不允许固定代理时，交由网络管理员处理，或使用支持该学校 PAC 策略的受管理浏览器大屏。不得通过关闭证书检查解决代理问题。
+
+实机验收还应在允许的测试网络分别覆盖直连和静态代理；仅 PAC/WPAD 且禁止直连的网络属于当前**不支持**的配置，不能把连接失败描述成已实现自动回退。
 
 ## 9. 与旧的 win7-launcher 的关系
 
