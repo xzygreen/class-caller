@@ -5,11 +5,9 @@
 .ident-text { min-width: 0; }
 .top .ident .stamp { flex: none; }
 
-/* 点人页：页脚后为托盘留白，仅在托盘显示时生效 */
-#tab-call { padding-bottom: 32px; }
-.tray:not([hidden]) ~ .project-credit { padding-bottom: calc(var(--tray-h, 80px) + 24px); }
+/* 点人页：名单与侧栏末尾为固定托盘留白 */
+#tab-call { padding-bottom: calc(var(--tray-h, 80px) + 24px); }
 #tab-call .main { min-width: 0; }
-#windowNotice { margin-bottom: var(--gap-item); }
 #gridEmpty .empty-state { padding: var(--gap-block) 0; }
 
 .send .send-target { margin-left: 2px; }

@@ -238,7 +238,7 @@ test('F18–F22 real browser DOM, geometry and accessibility regressions', { ski
       await teacherPage.key('Escape'); await teacherPage.close();
     });
 
-    await t.test('F22 real same-class response preserves newer edits; preview exposes warning and full content', async () => {
+    await t.test('F22 real same-class response preserves newer edits; preview exposes full accessible content without a disclaimer', async () => {
       await admin.cpost('class-a', 'display/clear', { all: true });
       const page = await browser.page({ cookie: teacher.cookie, base: s.base, width: 390, height: 844 });
       await page.goto(s.base + '/teacher?class=class-a');
@@ -265,7 +265,8 @@ test('F18–F22 real browser DOM, geometry and accessibility regressions', { ski
       await setValue(page, '#annTitle', '完整预览'); await setValue(page, '#annBody', body);
       await click(page, '.preview-full summary');
       assert.equal(await page.evaluate('document.getElementById("pvFullBody").textContent'), body.trim());
-      assert.ok(await page.evaluate('document.getElementById("pvWarning").textContent.includes("滚动阅读")'));
+      assert.equal(await page.evaluate('document.getElementById("pvWarning")'), null);
+      assert.equal(await page.evaluate('document.querySelector(".preview-full").open'), true);
       assert.ok((await page.ax()).some((node) => node.name?.value.includes('完整正文')));
       assert.equal(await page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true);
       await page.close();

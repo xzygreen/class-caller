@@ -1,13 +1,13 @@
 {
   "name": "class-caller",
-  "version": "2.1.6",
+  "version": "2.1.7",
   "description": "老师找人通知大屏：个人账号、班级授权、全校作息、定时提醒与班级留言（零运行时依赖）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "init-admin": "node scripts/init-admin.js",
     "test": "node --test test/*.test.js",
-    "test:browser:fixes": "node --test test/browser-audit-fixes.cjs"
+    "test:browser:fixes": "node --test --test-concurrency=1 test/browser-audit-fixes.cjs test/browser-copy.test.cjs"
   },
   "engines": {
     "node": ">=18"

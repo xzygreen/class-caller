@@ -32,7 +32,8 @@ const { start, asAdmin, teacherWithAccess, CLASS_A, ADMIN, TEACHER } = require('
     async function panel(page, hidden) {
       await page.waitForFunction((hidden) => document.getElementById('requestPanel').hidden === hidden, { timeout: 22000 }, hidden);
       assert.equal(await page.$eval('#requestPanel', (n) => n.getClientRects().length === 0), hidden);
-      assert.equal(await page.$eval('#homeIntro', (n) => n.textContent.includes('提交申请')), !hidden);
+      assert.equal(await page.$('#homeIntro'), null, '申请入口不依赖教程文案');
+      assert.equal(await page.$eval('#requestForm', (form) => form.querySelector('select').required), true);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'horizontal overflow');
     }
     for (const width of [390, 1366]) {

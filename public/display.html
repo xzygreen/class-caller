@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Caller 大屏</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.6">
-<link rel="icon" href="/favicon.ico?v=2.1.6" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.6" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.6">
+<link rel="stylesheet" href="tokens.css?v=2.1.7">
+<link rel="icon" href="/favicon.ico?v=2.1.7" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.7" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.7">
 <style>
   /* 版面单位：取宽、高中更紧的一边（16:9 时 1u = 1vw）。
      1366×768、1080p、4K 等比缩放；超宽屏按高度收住，4:3 按宽度收住。 */
@@ -262,13 +262,11 @@
   }
   body.active .foot.has-msg .message-row { grid-template-rows: 1fr; }
   .foot-status { display: flex; align-items: center; flex-wrap: wrap; gap: 0 16px; min-height: 44px; }
-  .project-credit {
+  .display-brand {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 6px;
     margin-left: auto; color: var(--on-ink-muted); font-size: max(12px, calc(.75 * var(--u))); line-height: 1.6;
   }
-  .project-credit > span { white-space: nowrap; }
-  .project-credit a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; color: inherit; text-underline-offset: 3px; cursor: pointer; }
-  .project-credit a:hover { color: var(--on-ink-body); }
+  .app-version { color: var(--on-ink-muted); font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #message {
     overflow: hidden; font-size: calc(2.6 * var(--u)); font-weight: 700;
     color: var(--gold); text-align: center; overflow-wrap: anywhere;
@@ -321,18 +319,13 @@
   }
 
   /* ============ 窄屏 / 竖屏：安全降级，不裁掉信息 ============ */
-  #narrowHint {
-    display: none; margin: 0; padding: 8px 14px; font-size: 14px; text-align: center;
-    background: rgba(240,180,41,.12); color: var(--gold); border-bottom: 1px solid rgba(240,180,41,.3);
-  }
   @media (orientation: portrait), (max-width: 900px) {
     :root { --u: 1.6vw; }
     html, body { overflow: auto; height: auto; min-height: 100%; }
-    body { grid-template-rows: auto auto 1fr auto; min-height: 100vh; }
-    #narrowHint { display: block; }
+    body { grid-template-rows: auto 1fr auto; min-height: 100vh; }
     .rail { flex-wrap: wrap; }
     .foot-status { justify-content: center; padding: 8px 0; }
-    .project-credit { width: 100%; justify-content: center; margin-left: 0; }
+    .display-brand { width: 100%; justify-content: center; margin-left: 0; }
     .ctl .ctl-text { display: none; }
     body.active #call { min-height: 70vh; }
     body.notice #notice { height: 70vh; min-height: 360px; }
@@ -368,8 +361,6 @@
   </div>
 </header>
 
-<p id="narrowHint">当前窗口是竖屏或太窄，内容可能需要滚动查看。建议横屏并全屏显示。</p>
-
 <main class="stage">
   <div id="urgentStrip" aria-hidden="true"></div>
 
@@ -393,14 +384,14 @@
       </div>
     </div>
     <div id="noticeMeta">
-      <p id="noticeReadHint" hidden>内容较长，可在正文区域滚动；键盘按 Tab 聚焦正文，再按方向键或 Page Down 阅读全文。</p>
+      <p id="noticeReadHint" hidden>向下滚动阅读全文</p>
       <div id="noticeAuthor"></div>
     </div>
   </section>
 
   <section id="call" aria-live="polite">
     <div id="label" class="kicker">老师正在找</div>
-    <div id="names" role="group" aria-label="被找的同学，点姓名可单独确认收到"></div>
+    <div id="names" role="group" aria-label="被找的同学"></div>
     <div id="ackRow">
       <button id="ack" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2"
@@ -418,17 +409,14 @@
   <div class="foot-status">
     <div id="audioTip" role="status">点一下画面开启提示音</div>
     <div id="queueHint" role="status"></div>
-    <div class="project-credit" aria-label="项目信息">
-      <span>由 xzygreen 开发 ·</span>
-      <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
-      <span>· 基于 MIT License 发布</span>
-    </div>
+    <div class="display-brand">Caller <span class="app-version" data-app-version hidden></span></div>
   </div>
 </footer>
 
 <div class="toast" id="reconnect">正在重新连接…</div>
-<div class="toast" id="launchWarning" role="alert">浏览器阻止了本地程序启动。请启用 classcaller 协议，或改用 D:\tools\win7-launcher.exe 原生监听模式后重新发送。</div>
+<div class="toast" id="launchWarning" role="alert">本地程序未启动，请联系管理员检查启动器后重新发送。</div>
 
-<script src="display.js?v=2.1.6"></script>
+<script src="version.js?v=2.1.7"></script>
+<script src="display.js?v=2.1.7"></script>
 </body>
 </html>

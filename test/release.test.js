@@ -12,6 +12,14 @@ const {
 
 const script = path.resolve(__dirname, '../scripts/verify-release.js');
 const TAG = 'v1.2.3';
+const ARTIFACTS = [
+  `ClassCallerDisplay-${TAG}-win7-x86.exe`,
+  `ClassCallerDisplay-${TAG}-win7-x86.zip`,
+  `ClassCallerLauncher-${TAG}-win7-x86.exe`,
+  `ClassCallerLauncher-${TAG}-win7-x86.zip`,
+];
+const RELEASE_FILES = [...ARTIFACTS, 'release-manifest.json'];
+RELEASE_FILES.push(...RELEASE_FILES.map((name) => `${name}.sha256`));
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caller-release-'));
@@ -30,7 +38,7 @@ function fixture(t) {
   const latest = git('rev-parse', 'HEAD');
   const dist = path.join(dir, 'dist');
   fs.mkdirSync(dist);
-  for (const name of artifactNames(TAG)) fs.writeFileSync(path.join(dist, name), `synthetic ${name}`);
+  for (const name of ARTIFACTS) fs.writeFileSync(path.join(dist, name), `synthetic ${name}`);
   return { dir, git, tagged, latest, dist };
 }
 
@@ -64,19 +72,48 @@ test('F10: a missing manual tag or branch masquerading as a tag is refused', (t)
   assert.equal(f.git('tag', '--list'), TAG);
 });
 
-test('release manifests bind tag, commit, exact artifact set, SHA-256 and size', (t) => {
+test('release manifests bind tag, commit, both EXE/ZIP pairs, SHA-256 and size', (t) => {
   const f = fixture(t);
   const manifest = stage(f);
   assert.equal(manifest.commit, f.tagged);
   assert.equal(manifest.tag, TAG);
-  assert.equal(verifyManifest(f.dir, TAG, f.dist).length, 6);
-  const file = path.join(f.dist, artifactNames(TAG)[0]);
-  const original = fs.readFileSync(file);
-  fs.appendFileSync(file, 'tampered');
-  assert.throws(() => verifyManifest(f.dir, TAG, f.dist), /SHA-256\/size mismatch/);
-  fs.writeFileSync(file, original);
-  fs.writeFileSync(`${file}.sha256`, 'invalid checksum\n');
-  assert.throws(() => verifyManifest(f.dir, TAG, f.dist), /Checksum mismatch/);
+  assert.deepEqual(artifactNames(TAG), ARTIFACTS);
+  assert.deepEqual(manifest.artifacts.map((item) => item.name), ARTIFACTS);
+  assert.deepEqual(verifyManifest(f.dir, TAG, f.dist), RELEASE_FILES);
+  assert.equal(RELEASE_FILES.length, 10, 'four payloads, manifest and five checksum sidecars');
+  for (const name of ARTIFACTS) {
+    const file = path.join(f.dist, name);
+    const original = fs.readFileSync(file);
+    fs.appendFileSync(file, 'tampered');
+    assert.throws(() => verifyManifest(f.dir, TAG, f.dist), /SHA-256\/size mismatch/);
+    fs.writeFileSync(file, original);
+  }
+  for (const name of [...ARTIFACTS, 'release-manifest.json']) {
+    const file = path.join(f.dist, `${name}.sha256`);
+    const original = fs.readFileSync(file);
+    fs.writeFileSync(file, 'invalid checksum\n');
+    assert.throws(() => verifyManifest(f.dir, TAG, f.dist), /Checksum mismatch/);
+    fs.writeFileSync(file, original);
+  }
+  assert.deepEqual(verifyManifest(f.dir, TAG, f.dist), RELEASE_FILES);
+});
+
+test('release staging refuses display-only packages, empty launcher files and incomplete checksums', (t) => {
+  const f = fixture(t);
+  f.git('checkout', '--detach', f.tagged);
+  const launcher = path.join(f.dist, ARTIFACTS[2]);
+  const launcherZip = path.join(f.dist, ARTIFACTS[3]);
+  fs.unlinkSync(launcher);
+  fs.unlinkSync(launcherZip);
+  assert.throws(() => writeManifest(f.dir, TAG, f.dist, {}), /Unexpected or missing/);
+  assert.equal(fs.existsSync(path.join(f.dist, 'release-manifest.json')), false);
+  fs.writeFileSync(launcherZip, 'synthetic launcher ZIP');
+  fs.writeFileSync(launcher, '');
+  assert.throws(() => writeManifest(f.dir, TAG, f.dist, {}), /Empty release file/);
+  fs.writeFileSync(launcher, 'synthetic launcher');
+  stage(f);
+  fs.unlinkSync(`${launcher}.sha256`);
+  assert.throws(() => verifyManifest(f.dir, TAG, f.dist), /ENOENT|Unexpected or missing/);
 });
 
 test('release verification refuses forged commit metadata, dirty source and extra private files', (t) => {
@@ -117,7 +154,11 @@ test('new publication uses only create --verify-tag and checks source again befo
   publish(f.dir, TAG, f.dist, 'notes.txt', run);
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[1].slice(0, 4), ['gh', 'release', 'create', TAG]);
-  assert.ok(calls[1].includes('--verify-tag'));
+  assert.deepEqual(calls[1].slice(4, 14), RELEASE_FILES.map((name) => path.resolve(f.dist, name)));
+  assert.deepEqual(calls[1].slice(14), [
+    '--verify-tag', '--title', `Class Caller ${TAG}`, '--notes-file', path.resolve('notes.txt'),
+  ]);
+  assert.ok(!calls.flat().includes('--generate-notes'), 'publish only the curated, concise release notes');
   assert.ok(!calls.flat().includes('--clobber'));
   assert.ok(!calls.flat().includes('--target'));
   f.git('checkout', '--detach', f.latest);

@@ -13,7 +13,7 @@ function node(tag = 'div', className = '', text = '') {
     style: { setProperty() {} }, textContent: text, clickCount: 0,
     classList: { add() {}, remove() {}, toggle() {} },
     append(...xs) { this.children.push(...xs); }, replaceChildren(...xs) { this.children = xs; },
-    setAttribute() {}, toggleAttribute() {}, querySelector() { return node(); },
+    setAttribute() {}, removeAttribute() {}, toggleAttribute() {}, querySelector() { return node(); },
     querySelectorAll(selector) { return selector === 'button' ? this.children.filter((c) => c && c.tagName === 'BUTTON') : []; },
     focus() {}, select() {}, replaceWith() {}, addEventListener() {}, reset() {},
     click() { if (!this.disabled) { this.clickCount++; return this.onclick?.(); } },
@@ -87,7 +87,7 @@ test('管理员和已授权全部现有班级的教师隐藏整块申请区域�
     const history = [{ id: 'r1', classId: 'a', className: '甲班', status: 'approved' }];
     await p.refresh(p.data(['a'], ['a'], history));
     assert.equal(p.get('requestPanel').hidden, true);
-    assert.equal(p.get('homeIntro').textContent, '进入班级开始点人。');
+    assert.ok(p.get('myClasses').children.length > 0, '保留班级入口，不依赖说明文案');
     if (role === 'admin') {
       await p.refresh(p.data(['a'], ['a', 'b']), true);
       assert.equal(p.get('requestPanel').hidden, true, '管理员始终无需申请');
@@ -272,7 +272,7 @@ test('教师和管理端拒绝 HTTP 200 的非应用响应，同时保留正常�
       p.context.fetch = async () => ({ ok: true, status: 200, headers: { get() {}, has() {} }, json: async () => payload });
       const result = await p.run("api('GET', '/api/me')");
       assert.equal(result.ok, false, file);
-      assert.ok(result.gatewayError.includes('非应用响应'));
+      assert.ok(result.gatewayError.includes('服务暂时不可用'));
     }
     p.context.fetch = async () => ({ ok: true, status: 200, headers: { get() {}, has() {} }, json: async () => { throw Error('HTML'); } });
     assert.equal((await p.run("api('GET', '/api/me')")).ok, false);

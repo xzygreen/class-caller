@@ -28,17 +28,6 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 
 #app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
 
-/* ---------- 项目署名：随内容滚动，不覆盖操作 ---------- */
-.project-credit {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0 6px;
-  width: 100%; margin: 0 auto; padding: 12px 20px 24px;
-  color: var(--text-muted); font-size: 12px; line-height: 1.6; text-align: center;
-}
-.project-credit > span { white-space: nowrap; }
-.project-credit a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; color: inherit; border-radius: var(--r-xs); }
-.project-credit a:hover { color: var(--text-strong); }
-#app > .project-credit { margin-top: auto; }
-
 /* ---------- 登录闸门 ---------- */
 .gate {
   position: fixed; inset: 0; z-index: 60;
@@ -48,11 +37,10 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
     var(--paper-050);
 }
 .gate form, .gate .panel {
-  width: 100%; max-width: 400px; flex: none; margin-top: auto;
+  width: 100%; max-width: 400px; flex: none; margin: auto 0;
   background: var(--paper-000); padding: var(--gap-block) 28px 28px;
   border-radius: var(--r-lg); box-shadow: var(--lift-3);
 }
-.gate > .project-credit { flex: none; margin-bottom: auto; padding: 16px 0 0; max-width: 400px; }
 .gate .brand { margin-bottom: var(--gap-group); }
 .gate h1 { font-size: var(--fs-page); font-weight: 750; letter-spacing: -.01em; color: var(--text-strong); margin: 0 0 6px; line-height: 1.2; }
 .gate .sub { font-size: 14px; color: var(--text-muted); margin: 0 0 var(--gap-group); }
@@ -62,7 +50,6 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .gate .err { min-height: 20px; margin: var(--gap-tight) 0 0; color: var(--alert); font-size: 14px; }
 .gate .err:empty { display: none; }
 .gate .switch { margin: var(--gap-item) 0 0; display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; font-size: 14px; color: var(--text-muted); align-items: center; }
-.gate pre { font-size: 13px; background: var(--paper-100); padding: 12px; border-radius: var(--r-sm); overflow: auto; }
 
 /* ---------- 品牌字标 ---------- */
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); text-decoration: none; }
@@ -77,6 +64,7 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .brand-mark::after { content: ""; position: absolute; left: 7px; width: 9px; bottom: 14px; height: 9px; border-radius: 2px; background: var(--on-ink-strong); }
 .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
 .brand-role { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+.app-version { font-size: 12px; font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------- 表单控件 ---------- */
 input[type="text"], input[type="password"], input[type="time"], input[type="date"], input[type="number"],

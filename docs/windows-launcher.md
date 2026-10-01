@@ -2,7 +2,9 @@
 
 本项目把 Win7/Win7 风格程序启动在**运行 `/display` 的大屏机**上，而不是老师机。Linux 服务器只能推送事件，不能直接在远端 Windows 桌面执行程序。
 
-仓库交付可审计的 Win32 C 源码和 x86 构建脚本；在受控 Windows 或 MinGW-w64 构建机生成 `win7-launcher.exe`。Linux/macOS 可交叉编译，但交叉编译与 PE 检查**不等于 Windows 7 实机运行验证**。
+可从 [Releases](https://github.com/xzygreen/class-caller/releases/latest) 下载 `ClassCallerLauncher-*-win7-x86.zip`（启动器、配置示例、注册/监听脚本及说明），或下载版本化单文件 EXE 供更新。它用于启动已有校内程序，不是完整大屏；完整大屏请选择 `ClassCallerDisplay-*-win7-x86.zip`。
+
+源码树保留可审计的 Win32 C 源码和 x86 构建脚本，也可在受控 Windows 或 MinGW-w64 构建机自行生成 `win7-launcher.exe`。Linux/macOS 可交叉编译，但交叉编译与 PE 检查**不等于 Windows 7 实机运行验证**。
 
 ## 1. 生成严格的 32 位 EXE
 
@@ -62,7 +64,11 @@ certutil -hashfile build\win7-launcher.exe SHA256
 
 ## 2. 把文件放到持久的 D 盘
 
-在大屏机执行：
+使用 Release ZIP 时，把解压目录中的文件放到 `D:\tools`。包内只有 `win7-launcher.ini.example`；**首次安装先复制为同目录的 `win7-launcher.ini`，再配置下面的路径**。
+
+**更新**：先退出启动器，只替换 `win7-launcher.exe`，保留原有 `win7-launcher.ini` 及其 `state_path` 指向的状态文件，不要用示例覆盖或删除去重状态。单独下载的版本化 EXE 需先重命名为 `win7-launcher.exe`。
+
+若从源码构建，首次安装时在仓库根目录执行：
 
 ```bat
 mkdir D:\tools

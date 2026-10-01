@@ -36,8 +36,10 @@ function verifySource(repo, tag) {
 }
 
 function artifactNames(tag) {
-  const base = `ClassCallerDisplay-${tag}-win7-x86`;
-  return [`${base}.exe`, `${base}.zip`];
+  return ['ClassCallerDisplay', 'ClassCallerLauncher'].flatMap((program) => {
+    const base = `${program}-${tag}-win7-x86`;
+    return [`${base}.exe`, `${base}.zip`];
+  });
 }
 
 function readRegular(dir, name) {
@@ -115,8 +117,8 @@ function publish(repo, tag, dir, notesFile, run = execFileSync) {
   if (exists) throw new Error(`Refusing to overwrite published release/assets: ${tag}`);
   run('gh', [
     'release', 'create', tag, ...files.map((name) => path.resolve(dir, name)),
-    '--verify-tag', '--title', `Class Caller Display ${tag}`,
-    '--notes-file', path.resolve(notesFile), '--generate-notes',
+    '--verify-tag', '--title', `Class Caller ${tag}`,
+    '--notes-file', path.resolve(notesFile),
   ], { cwd: repo, stdio: 'inherit' });
 }
 

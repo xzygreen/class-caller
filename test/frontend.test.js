@@ -44,7 +44,7 @@ test('教师端：班级工作台四个标签（点人 / 班级留言 / 定时�
     assert.ok(teacherHtml.includes(`data-tab="${tab}"`) && teacherHtml.includes(`id="tab-${tab}"`), tab);
   }
   // 点人：作息、下一可用时间、搜索、说明、当前大屏与确认、等待队列
-  assert.ok(teacherHtml.includes('id="windowNotice"') && teacherJs.includes('当前正在上课，暂不能点人') && teacherJs.includes('下次可用时间'));
+  assert.ok(teacherHtml.includes('id="windowText"') && teacherJs.includes('下次可点人：') && teacherJs.includes('暂不能点人'));
   assert.ok(teacherHtml.includes('id="search"') && teacherHtml.includes('id="msg"') && teacherHtml.includes('id="queue"'));
   assert.ok(teacherJs.includes("cpath('calls')") && teacherJs.includes("cpath('stream')") && teacherJs.includes("cpath('display/clear')"));
   assert.ok(teacherJs.includes('CALL_WINDOW_CLOSED'));
@@ -121,7 +121,7 @@ test('操作记录按 20 条分页，首尾均可翻页，过期筛选响应不�
   assert.ok(adminJs.includes('request !== auditRequest'));
   assert.equal((adminHtml.match(/data-audit-step="-1"/g) || []).length, 2);
   assert.equal((adminHtml.match(/data-audit-step="1"/g) || []).length, 2);
-  assert.ok(adminHtml.includes('每页 20 条'));
+  assert.ok(adminHtml.includes('data-audit-page role="status"'), '实际条数与页数按当前数据呈现');
   assert.ok(read('admin.css').includes('#auditTable { table-layout: fixed; }'));
   assert.ok(read('admin.css').includes('overflow-wrap: anywhere'));
 });
@@ -145,24 +145,20 @@ test('本地 CSS / JS 引用都带当前版本号，发版后浏览器与 CDN �
   }
 });
 
-test('三端项目署名保留 MIT，GitHub 文字链接在新标签页打开', () => {
+test('三端只显示任务相关信息与版本，不在操作页重复项目署名', () => {
   for (const html of [teacherHtml, adminHtml, displayHtml]) {
-    assert.ok(html.includes('由 xzygreen 开发') && html.includes('基于 MIT License 发布'));
-    const links = [...html.matchAll(/<a\b[^>]*href="https:\/\/github\.com\/xzygreen\/class-caller"[^>]*>GitHub 开源项目<\/a>/g)];
-    assert.ok(links.length > 0);
-    for (const [link] of links) {
-      assert.match(link, /target="_blank"/);
-      assert.match(link, /rel="noopener noreferrer"/);
-    }
-    assert.ok(!html.includes('未经授权不可商用'));
+    assert.ok(!html.includes('由 xzygreen 开发'));
+    assert.ok(!html.includes('GitHub 开源项目'));
+    assert.ok(!html.includes('基于 MIT License 发布'));
+    assert.ok(html.includes('class="app-version" data-app-version hidden'));
   }
   for (const html of [teacherHtml, adminHtml]) {
     const [gate, app] = html.split('<div id="app" hidden>');
-    assert.ok(gate.includes('<footer class="project-credit"'), '登录闸门内有署名');
-    assert.ok(app.includes('<footer class="project-credit"'), '登录后有独立署名');
+    assert.ok(gate.includes('data-app-version'), '登录闸门内有版本位置');
+    assert.ok(app.includes('data-app-version'), '登录后品牌旁有版本位置');
   }
-  assert.ok(teacherHtml.indexOf('<footer class="project-credit"', teacherHtml.indexOf('id="tray"')) > teacherHtml.indexOf('id="tray"'));
-  assert.ok(read('teacher.css').includes('.tray:not([hidden]) ~ .project-credit'));
+  assert.ok(displayHtml.includes('class="display-brand"'), '大屏绑定错误时也能看到品牌与版本');
+  assert.ok(read('teacher.css').includes('#tab-call { padding-bottom: calc(var(--tray-h, 80px) + 24px); }'));
 });
 
 test('三端使用短地址及版本化的本地图标', () => {

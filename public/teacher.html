@@ -5,21 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <title>Caller · 教师端</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.6">
-<link rel="stylesheet" href="ui.css?v=2.1.6">
-<link rel="stylesheet" href="teacher.css?v=2.1.6">
-<link rel="icon" href="/favicon.ico?v=2.1.6" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.6" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.6">
+<link rel="stylesheet" href="tokens.css?v=2.1.7">
+<link rel="stylesheet" href="ui.css?v=2.1.7">
+<link rel="stylesheet" href="teacher.css?v=2.1.7">
+<link rel="icon" href="/favicon.ico?v=2.1.7" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.7" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.7">
 </head>
 <body>
 
 <!-- ============ 登录 / 注册 ============ -->
 <div id="gate" class="gate" hidden>
   <form id="loginForm" novalidate>
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">教师端</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">教师端</span></div>
     <h1>登录</h1>
-    <p class="sub">使用个人账号登录。能操作哪些班级由管理员授权。</p>
     <label for="loginUser">登录名</label>
     <input type="text" id="loginUser" autocomplete="username" required autocapitalize="off" spellcheck="false">
     <label for="loginPwd">密码</label>
@@ -27,15 +26,14 @@
     <p id="loginErr" class="err" role="alert"></p>
     <p id="loginInfo" class="note" hidden></p>
     <button type="submit" class="btn btn-primary" id="loginBtn"><span>登录</span></button>
-    <p class="switch">还没有账号？<button type="button" class="btn btn-ghost btn-sm" id="toRegister">教师注册</button><button type="button" class="btn btn-ghost btn-sm" id="forgot">忘记密码</button></p>
+    <p class="switch"><button type="button" class="btn btn-ghost btn-sm" id="toRegister">教师注册</button><button type="button" class="btn btn-ghost btn-sm" id="forgot">忘记密码</button></p>
   </form>
 
   <form id="registerForm" hidden>
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">教师端</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">教师端</span></div>
     <h1>教师注册</h1>
-    <p class="sub">注册后申请管理班级，管理员批准后就能点人。</p>
-    <label for="regUser">登录名 <small>3–32 位字母、数字、点、下划线或连字符</small></label>
-    <input type="text" id="regUser" autocomplete="username" required autocapitalize="off" spellcheck="false">
+    <label for="regUser">登录名</label>
+    <input type="text" id="regUser" title="3–32 位字母、数字、点、下划线或连字符，以字母或数字开头" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{2,31}" autocapitalize="off" spellcheck="false">
     <label for="regName">教师姓名</label>
     <input type="text" id="regName" autocomplete="name" required maxlength="20">
     <label for="regTitle">学科或职务 <small>可选</small></label>
@@ -44,30 +42,24 @@
       <option>班主任</option><option>语文老师</option><option>数学老师</option><option>英语老师</option>
       <option>物理老师</option><option>化学老师</option><option>历史老师</option><option>体育老师</option>
     </datalist>
-    <label for="regPwd">密码 <small>至少 8 位</small></label>
-    <input type="password" id="regPwd" autocomplete="new-password" required minlength="8">
+    <label for="regPwd">密码</label>
+    <input type="password" id="regPwd" autocomplete="new-password" required minlength="8" maxlength="128">
     <p id="regErr" class="err" role="alert"></p>
     <button type="submit" class="btn btn-primary" id="regBtn"><span>注册并登录</span></button>
-    <p class="switch">已有账号？<button type="button" class="btn btn-ghost btn-sm" id="toLogin">返回登录</button></p>
+    <p class="switch"><button type="button" class="btn btn-ghost btn-sm" id="toLogin">返回登录</button></p>
   </form>
 
   <form id="passwordForm" hidden>
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">教师端</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">教师端</span></div>
     <h1>设置新密码</h1>
-    <p class="sub">你正在使用管理员发放的临时密码，继续之前需要先改成自己的密码。</p>
-    <label for="newPwd">新密码 <small>至少 8 位</small></label>
-    <input type="password" id="newPwd" autocomplete="new-password" required minlength="8">
+    <label for="newPwd">新密码</label>
+    <input type="password" id="newPwd" autocomplete="new-password" required minlength="8" maxlength="128">
     <label for="newPwd2">再输一次</label>
-    <input type="password" id="newPwd2" autocomplete="new-password" required minlength="8">
+    <input type="password" id="newPwd2" autocomplete="new-password" required minlength="8" maxlength="128">
     <p id="pwdErr" class="err" role="alert"></p>
     <button type="submit" class="btn btn-primary" id="pwdBtn"><span>保存并进入</span></button>
     <p class="switch"><button type="button" class="btn btn-ghost btn-sm" id="pwdLogout">退出登录</button></p>
   </form>
-  <footer class="project-credit" aria-label="项目信息">
-    <span>由 xzygreen 开发 ·</span>
-    <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
-    <span>· 基于 MIT License 发布</span>
-  </footer>
 </div>
 
 <!-- ============ 主体 ============ -->
@@ -75,7 +67,7 @@
   <header class="top">
     <div class="top-in">
       <div class="ident">
-        <a class="brand" href="/teacher" id="brandHome" aria-label="Caller · 个人工作台"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span></a>
+        <a class="brand" href="/teacher" id="brandHome" aria-label="Caller · 个人工作台"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span></a>
         <span class="sep" aria-hidden="true"></span>
         <span class="stamp" id="classStamp" hidden></span>
         <div class="ident-text">
@@ -111,12 +103,6 @@
   <!-- ---------- 个人工作台 ---------- -->
   <main id="home" class="shell two" hidden>
     <div class="stack">
-      <div class="page-head">
-        <div>
-          <h2 class="page-title" id="hello">个人工作台</h2>
-          <p id="homeIntro">进入班级开始点人。</p>
-        </div>
-      </div>
       <section class="panel" aria-labelledby="myClassesTitle">
         <div class="panel-head"><h2 id="myClassesTitle">我的班级</h2></div>
         <div id="myClasses" class="list"></div>
@@ -149,11 +135,10 @@
     <!-- 点人 -->
     <section id="tab-call" class="shell two" role="tabpanel" aria-labelledby="tabbtn-call">
       <div class="main">
-        <div id="windowNotice" class="note warn" hidden></div>
         <div class="search">
           <svg data-icon="search"></svg>
           <label class="sr-only" for="search">搜索学生</label>
-          <input type="search" id="search" placeholder="输入姓名搜索，回车选中第一个" autocomplete="off" spellcheck="false" enterkeyhint="done">
+          <input type="search" id="search" placeholder="搜索学生姓名" autocomplete="off" spellcheck="false" enterkeyhint="done">
         </div>
         <div class="meta"><span id="hint" aria-live="polite">已选择 0 / 20</span><button type="button" class="btn btn-ghost btn-sm" id="reset" disabled>清空选择</button></div>
         <div id="grid" class="grid" role="group" aria-label="学生名单"></div>
@@ -180,7 +165,7 @@
     <!-- 班级留言 -->
     <section id="tab-announce" class="shell ann" role="tabpanel" aria-labelledby="tabbtn-announce" hidden>
       <section class="panel ann-form" aria-labelledby="annFormTitle">
-        <div class="panel-head"><h2 id="annFormTitle">发布班级留言</h2><p>留言以标题加正文显示在大屏上，学生不需要点「收到」。</p></div>
+        <div class="panel-head"><h2 id="annFormTitle">发布留言</h2></div>
         <form id="announceForm">
           <label class="field"><span>标题</span><input type="text" id="annTitle" maxlength="30" required placeholder="例：班级通知"></label>
           <label class="field"><span>正文</span><textarea id="annBody" maxlength="300" required placeholder="例：明天统一穿校服，请带好实验报告。"></textarea></label>
@@ -192,17 +177,16 @@
             <label class="field"><span>自动下屏</span>
               <select id="annDuration">
                 <option value="600">10 分钟后</option><option value="1800">30 分钟后</option><option value="3600">1 小时后</option>
-                <option value="14400">4 小时后</option><option value="86400">1 天后</option><option value="0">一直显示，直到手动撤回</option>
+                <option value="14400">4 小时后</option><option value="86400">1 天后</option><option value="0">手动撤回</option>
               </select>
             </label>
           </div>
-          <label class="check" id="annUrgentField" hidden><input type="checkbox" id="annUrgent"> 紧急广播：立即抢占大屏（仅管理员）</label>
-          <p id="annPolicyNote" class="note warn" hidden></p>
+          <label class="check" id="annUrgentField" hidden><input type="checkbox" id="annUrgent"> 紧急广播</label>
           <div class="row end" style="margin-top:var(--gap-item)"><button type="submit" class="btn btn-primary" id="annSend"><svg data-icon="send"></svg><span>发布到大屏</span></button></div>
         </form>
       </section>
       <section class="panel ann-preview" aria-labelledby="annPvTitle">
-        <div class="panel-head"><h2 id="annPvTitle">大屏预览</h2><p>16:9 缩略示意，不代表全文都能在一屏显示。</p></div>
+        <div class="panel-head"><h2 id="annPvTitle">大屏预览</h2></div>
         <div id="annPreview" class="screen-169" aria-hidden="true">
           <div class="pv-rail"><span id="pvClass">班级</span><span id="pvClock">--:--</span></div>
           <div class="pv-main">
@@ -212,7 +196,6 @@
           </div>
           <div class="pv-author" id="pvAuthor">—— 老师</div>
         </div>
-        <p class="muted" id="pvWarning">长留言在大屏会自动缩小字号；仍放不下时需要滚动阅读。发布前请检查全文，重要地点和时间建议放在开头。</p>
         <details class="preview-full">
           <summary>阅读完整留言</summary>
           <h3 id="pvFullTitle"></h3>
@@ -229,7 +212,7 @@
     <section id="tab-schedule" class="shell two" role="tabpanel" aria-labelledby="tabbtn-schedule" hidden>
       <div class="stack">
         <section class="panel" aria-labelledby="schFormTitle">
-          <div class="panel-head"><h2 id="schFormTitle">新建每日定时提醒</h2><p>到点后自动在大屏上点这些学生。时间必须在允许点人的时段内。</p></div>
+          <div class="panel-head"><h2 id="schFormTitle">新建定时提醒</h2></div>
           <form id="scheduleForm">
             <div class="field">
               <span class="label">学生 <em id="schCount">已选 0 人</em></span>
@@ -243,10 +226,10 @@
               <button type="button" class="btn btn-ghost btn-sm" id="schUseCall" hidden></button>
             </div>
             <div class="grid2">
-              <label class="field"><span>提醒时间</span><input type="time" id="schTime" required step="60"><small id="schWindowHint">必须在允许点人的时段内</small></label>
+              <label class="field"><span>提醒时间</span><input type="time" id="schTime" required step="60"></label>
               <label class="field"><span>提醒内容或地点 <em>可选</em></span><input type="text" id="schMessage" maxlength="60" placeholder="例：去数学办公室找张老师"></label>
             </div>
-            <fieldset class="field plain-fieldset"><legend class="label">执行星期 <em>默认每个上课日</em></legend>
+            <fieldset class="field plain-fieldset"><legend class="label">执行星期</legend>
               <div id="schWeekdays" class="checks">
                 <label class="check"><input type="checkbox" value="1" checked> 周一</label>
                 <label class="check"><input type="checkbox" value="2" checked> 周二</label>
@@ -261,6 +244,7 @@
               <label class="field"><span>开始日期 <em>可选</em></span><input type="date" id="schStart"></label>
               <label class="field"><span>结束日期 <em>可选</em></span><input type="date" id="schEnd"></label>
             </div>
+            <p id="schError" class="note bad" role="alert" tabindex="-1" hidden></p>
             <div class="row end"><button type="submit" class="btn btn-primary" id="schCreate"><svg data-icon="plus"></svg><span>创建定时提醒</span></button></div>
           </form>
         </section>
@@ -273,7 +257,6 @@
         <section class="panel" aria-labelledby="schWinTitle">
           <div class="panel-head"><h2 id="schWinTitle">允许点人的时段</h2></div>
           <div id="schWindows"></div>
-          <p class="muted" style="margin:12px 0 0">定时提醒只能设在这些时段内。作息由管理员维护，改动后不符合的提醒会自动暂停。</p>
         </section>
       </aside>
     </section>
@@ -301,7 +284,7 @@
         <b>已选 <span id="pickedCount">0</span> 人</b><em id="pickedNames"></em><svg data-icon="up"></svg>
       </button>
       <label class="sr-only" for="msg">附加说明</label>
-      <input type="text" id="msg" placeholder="附加说明（可选），例：带作业本到办公室" maxlength="60">
+      <input type="text" id="msg" placeholder="附加说明（可选）" maxlength="60">
       <button type="button" class="btn btn-primary send" id="send" disabled><svg data-icon="send"></svg><span id="sendText">通知到大屏</span></button>
       <p class="note bad tray-err" id="sendErr" role="alert" hidden></p>
     </div>
@@ -318,25 +301,21 @@
       <p class="muted" id="callerLabel" style="margin:12px 0 0"></p>
     </div>
   </div>
-  <footer class="project-credit" aria-label="项目信息">
-    <span>由 xzygreen 开发 ·</span>
-    <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
-    <span>· 基于 MIT License 发布</span>
-  </footer>
 </div>
 
 <dialog id="pwdDialog" aria-labelledby="pwdChangeTitle">
   <form id="pwdChangeForm" class="dlg-in">
     <h2 id="pwdChangeTitle">修改密码</h2>
     <label class="field"><span>当前密码</span><input type="password" id="curPwd" autocomplete="current-password" aria-describedby="pwdChangeErr" required></label>
-    <label class="field"><span>新密码 <em>至少 8 位</em></span><input type="password" id="nxtPwd" autocomplete="new-password" aria-describedby="pwdChangeErr" required minlength="8"></label>
+    <label class="field"><span>新密码</span><input type="password" id="nxtPwd" autocomplete="new-password" aria-describedby="pwdChangeErr" required minlength="8" maxlength="128"></label>
     <p id="pwdChangeErr" class="note bad" role="alert" hidden></p>
     <div class="dlg-foot"><button type="button" class="btn btn-secondary" id="pwdCancel">取消</button><button type="submit" class="btn btn-primary" id="pwdSave"><span>保存</span></button></div>
   </form>
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="ui.js?v=2.1.6"></script>
-<script src="teacher.js?v=2.1.6"></script>
+<script src="ui.js?v=2.1.7"></script>
+<script src="version.js?v=2.1.7"></script>
+<script src="teacher.js?v=2.1.7"></script>
 </body>
 </html>

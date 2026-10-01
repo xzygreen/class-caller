@@ -295,15 +295,16 @@ https://你的域名/display?class=班级标识
 
 适合 Windows 7/10 的教室电脑，需要自动前置、全屏、提示音。
 
-- 从 [Releases](https://github.com/xzygreen/class-caller/releases/latest) 下载 ZIP。
-- 在同目录的 `display.ini` 里填 `server=你的域名` 和 `class_id=班级标识`。
+- 从 [Releases](https://github.com/xzygreen/class-caller/releases/latest) 下载 `ClassCallerDisplay-*-win7-x86.zip` 并解压。
+- 首次安装：将同目录的 `display.ini.example` 复制为 `display.ini`，填写实际 `server=https://你的域名` 和 `class_id=班级标识` 后再运行。
+- 更新：先退出旧程序，只替换 `display.exe`，**保留原有 `display.ini`**，不要用示例覆盖；单独下载的版本化 EXE 需先重命名为 `display.exe`。
 - 32 位程序，只依赖系统自带的 `msvcrt.dll`。Windows 7 需要 TLS 1.2 支持和较新的根证书。
 
 详细步骤和故障对照表见 [Windows 原生大屏部署](docs/windows-display.md)。
 
 ### 方案三：旧版启动器
 
-需要在收到通知时拉起既有 Windows 程序时使用，见 [Windows 启动器部署](docs/windows-launcher.md)。
+需要在收到通知时拉起既有 Windows 程序时使用。从 [Releases](https://github.com/xzygreen/class-caller/releases/latest) 下载 `ClassCallerLauncher-*-win7-x86.zip`；首次安装将 `win7-launcher.ini.example` 复制为 `win7-launcher.ini`，配置目标程序、工作目录与持久状态路径后，按 [Windows 启动器部署](docs/windows-launcher.md) 选择协议注册或原生监听。更新时先退出启动器，**保留原有 INI 和状态文件**；版本化单文件 EXE 需重命名为 `win7-launcher.exe` 后替换。
 
 ---
 
@@ -473,9 +474,9 @@ PUPPETEER_PATH=/tmp/caller-browser/node_modules/puppeteer node test/browser-requ
 
 也可以通过 `PUPPETEER_PATH` 指定已有的 `puppeteer-core`，并用 `CHROME_PATH` 指定 Chrome 可执行文件。
 
-### `display.exe` 的构建
+### Windows 程序的构建与发布
 
-由 GitHub Actions 自动构建：推送到 `main` 会用 `gcc-mingw-w64-i686` 编译并上传产物（Actions → CI → Artifacts）；打 `v*` 标签生成带 ZIP、SHA-256 和 `release-manifest.json` 的 Release。本地构建见 [Windows 原生大屏部署](docs/windows-display.md)。
+由 GitHub Actions 自动构建：推送到 `main` 会用 `gcc-mingw-w64-i686` 编译两份程序并上传产物（Actions → CI → Artifacts）；打 `v*` 标签生成 Release，包含大屏 `ClassCallerDisplay-<标签>-win7-x86` 与启动器 `ClassCallerLauncher-<标签>-win7-x86` 各自的 `.exe` 和 `.zip` 四个产物、`release-manifest.json` 及五份 `.sha256`。两份 ZIP 均只附 `.ini.example`，不会预置或覆盖实际 INI。本地构建见 [Windows 原生大屏部署](docs/windows-display.md) 与 [Windows 启动器部署](docs/windows-launcher.md)。
 
 发布以**已存在标签指向的提交**为唯一源码：手动运行也必须提供已经创建的标签，流程解析提交后显式检出，再在构建前和上传前断言 `HEAD`、标签及清单中的 commit 相同。不存在的标签会拒绝，不会拿所选分支隐式造标签。Release（包括已部分上传或草稿）一旦存在就拒绝重发，不覆盖已发布资产；修复使用新版本标签，不移动旧标签。
 

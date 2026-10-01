@@ -2,9 +2,9 @@
 
 > 更新说明（账号版）：服务端新增了**班级留言**（`type: "announcement"`，含 `title`、`body`、`author`、`priority`、`queued`）。新版 `display.exe` 会以独立版式显示留言（标题 + 正文 + 发布人，没有「收到」按钮），并在底部提示等待显示的条数。旧版 exe 收到留言快照会当作清屏处理，不会显示错误内容，但要显示留言必须替换为新版。`display.ini` 不需要改。
 >
-> 编译产物由 GitHub Actions 自动生成：推送到 `main` 会在 CI 的 Artifacts 里得到 `display.exe`；打 `v*` 标签会发布带 ZIP 和校验文件的 Release。
+> 编译产物由 GitHub Actions 自动生成：推送到 `main` 会在 CI 的 Artifacts 里得到两份 Windows EXE；打 `v*` 标签会发布版本化 EXE、ZIP、清单和校验文件。大屏下载 [Release](https://github.com/xzygreen/class-caller/releases/latest) 中的 `ClassCallerDisplay-*-win7-x86.zip`；包内只有 `display.ini.example`，首次安装须复制为 `display.ini` 并配置，详见第 3 节。
 >
-> v2.1.2 为网页和 Windows 程序加入统一 Caller 图标。更新时先退出旧程序，只替换 `display.exe`，**保留原有 `display.ini`**（不要用 ZIP 中的示例配置覆盖它）。网页改为 `/display?class=班级标识`，旧 `.html` 链接自动跳转并保留班级参数；原生程序的 `server=` / `class_id=` 不变。
+> v2.1.2 为网页和 Windows 程序加入统一 Caller 图标。更新时先退出旧程序，只替换 `display.exe`，**保留原有 `display.ini`**（不要用 ZIP 中的示例配置覆盖它）；单独下载的版本化 EXE 需先重命名为 `display.exe`。网页改为 `/display?class=班级标识`，旧 `.html` 链接自动跳转并保留班级参数；原生程序的 `server=` / `class_id=` 不变。
 
 大屏端不再依赖浏览器，而是一个**完整的 32 位原生 Windows 程序** `display.exe`：单文件、静态链接、零运行时依赖（不需要 .NET、VC 运行库、Electron 或浏览器），在 32 位和 64 位的 Windows 7 SP1 / Windows 10 上都能直接运行。
 
@@ -30,7 +30,7 @@
 
 ## 2. 构建严格的 32 位 EXE
 
-仓库只交付可审计的 C 源码 `windows-display/src/display.c` 和构建脚本，不包含预编译产物；请在受控构建机生成。
+源码树保留可审计的 C 源码 `windows-display/src/display.c` 和构建脚本，不提交预编译产物。可直接下载 Release，或按以下步骤在受控构建机自行生成。
 
 ### 方案 A：i686 MinGW-w64（推荐，Linux/macOS 也能交叉编译）
 
@@ -89,7 +89,7 @@ D:\class-caller\uninstall-autostart.cmd
 D:\class-caller\display.log     ← 程序自动生成
 ```
 
-在大屏机上：
+使用 Release ZIP 时，把解压目录中的文件放到 `D:\class-caller`；**首次安装先将 `display.ini.example` 复制为 `display.ini`**，不要覆盖已有配置。若从源码构建，首次安装时在仓库根目录执行：
 
 ```bat
 mkdir D:\class-caller

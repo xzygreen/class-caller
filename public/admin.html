@@ -5,47 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <title>Caller · 管理端</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.6">
-<link rel="stylesheet" href="ui.css?v=2.1.6">
-<link rel="stylesheet" href="admin.css?v=2.1.6">
-<link rel="icon" href="/favicon.ico?v=2.1.6" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.6" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.6">
+<link rel="stylesheet" href="tokens.css?v=2.1.7">
+<link rel="stylesheet" href="ui.css?v=2.1.7">
+<link rel="stylesheet" href="admin.css?v=2.1.7">
+<link rel="icon" href="/favicon.ico?v=2.1.7" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.7" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.7">
 </head>
 <body>
 
 <div id="gate" class="gate" hidden>
   <form id="loginForm">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">管理端</span></div>
     <h1>管理员登录</h1>
-    <p class="sub">仅限管理员账号。教师请使用 <a href="/teacher">教师端</a>。</p>
     <label for="loginUser">登录名</label>
     <input type="text" id="loginUser" autocomplete="username" required autocapitalize="off" spellcheck="false">
     <label for="loginPwd">密码</label>
     <input type="password" id="loginPwd" autocomplete="current-password" required>
     <p id="loginErr" class="err" role="alert"></p>
     <button type="submit" class="btn btn-primary" id="loginBtn"><span>登录</span></button>
+    <p class="switch"><a href="/teacher">教师端</a></p>
   </form>
   <div id="setupPanel" class="panel" hidden>
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
-    <h1>尚未初始化</h1>
-    <p class="sub">系统还没有管理员。请在服务器上创建首个管理员：</p>
-    <pre>ADMIN_USERNAME=admin ADMIN_PASSWORD='强密码' \
-npm run init-admin</pre>
-    <p class="sub">或用 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 环境变量启动服务一次。完成后刷新本页。</p>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">管理端</span></div>
+    <h1>还没有管理员账号</h1>
+    <p class="sub">请联系部署负责人创建管理员账号。</p>
+    <a class="btn btn-secondary" href="/admin">重新检查</a>
   </div>
-  <footer class="project-credit" aria-label="项目信息">
-    <span>由 xzygreen 开发 ·</span>
-    <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
-    <span>· 基于 MIT License 发布</span>
-  </footer>
 </div>
 
 <div id="app" hidden>
   <header class="top">
     <div class="top-in">
       <div class="ident">
-        <a class="brand" href="/admin"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></a>
+        <a class="brand" href="/admin"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">管理端</span></a>
       </div>
       <div class="states" id="schoolState" aria-label="全校状态">
         <span class="status" id="windowPill"><svg data-icon="clock"></svg><span id="windowText">作息</span></span>
@@ -99,7 +92,7 @@ npm run init-admin</pre>
         </div>
         <div id="todo"></div>
         <section class="panel" aria-labelledby="ovSignalTitle">
-          <div class="panel-head"><h2 id="ovSignalTitle">各班信号</h2><p>每个班大屏此刻在显示什么，以及学生的确认进度。</p></div>
+          <div class="panel-head"><h2 id="ovSignalTitle">各班信号</h2></div>
           <div id="ovDisplays" class="dossiers"></div>
         </section>
       </section>
@@ -107,7 +100,7 @@ npm run init-admin</pre>
       <!-- 申请 -->
       <section id="view-requests" class="stack" hidden aria-labelledby="reqTitle">
         <div class="page-head">
-          <div><h1 id="reqTitle">班级管理申请</h1><p>批准后教师立即可以对该班点人、发留言和设定时提醒。</p></div>
+          <div><h1 id="reqTitle">班级管理申请</h1></div>
           <label class="field inline-field"><span>状态</span><select id="reqStatus"><option value="pending">待审批</option><option value="">全部</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></label>
         </div>
         <section class="panel"><div id="requests" class="list"></div></section>
@@ -116,7 +109,7 @@ npm run init-admin</pre>
       <!-- 班级 -->
       <section id="view-classes" class="stack" hidden aria-labelledby="clsTitle">
         <div class="page-head">
-          <div><h1 id="clsTitle">班级与学生</h1><p>每个班对应一块大屏。班级标识用于绑定大屏链接，创建后不能修改。</p></div>
+          <div><h1 id="clsTitle">班级与学生</h1></div>
           <button type="button" class="btn btn-primary" id="newClass"><svg data-icon="plus"></svg><span>新建班级</span></button>
         </div>
         <div id="classList" class="stack"></div>
@@ -125,7 +118,7 @@ npm run init-admin</pre>
       <!-- 教师 -->
       <section id="view-users" class="stack" hidden aria-labelledby="usrTitle">
         <div class="page-head">
-          <div><h1 id="usrTitle">教师与权限</h1><p>账号属于个人；班级权限由这里授权或撤销，立即生效。</p></div>
+          <div><h1 id="usrTitle">教师与权限</h1></div>
           <button type="button" class="btn btn-primary" id="newUser"><svg data-icon="plus"></svg><span>创建账号</span></button>
         </div>
         <section class="panel flush">
@@ -140,11 +133,10 @@ npm run init-admin</pre>
       <!-- 作息 -->
       <section id="view-windows" class="stack" hidden aria-labelledby="winTitle">
         <div class="page-head">
-          <div><h1 id="winTitle">全校作息</h1><p>允许点人的时段（<span id="tzLabel">Asia/Shanghai</span>）。开始时间包含、结束时间不包含。</p></div>
+          <div><h1 id="winTitle">全校作息</h1><p id="tzLabel"></p></div>
         </div>
         <section class="panel">
-          <div class="note warn"><svg data-icon="alert"></svg><span>保存后立即对全校生效。不符合新作息的定时任务会自动暂停，并通知创建它的教师。</span></div>
-          <fieldset class="plain-fieldset" style="margin-top:var(--gap-group)"><legend class="label">上课日</legend>
+          <fieldset class="plain-fieldset"><legend class="label">上课日</legend>
             <div id="wDays" class="checks">
               <label class="check"><input type="checkbox" value="1"> 周一</label><label class="check"><input type="checkbox" value="2"> 周二</label>
               <label class="check"><input type="checkbox" value="3"> 周三</label><label class="check"><input type="checkbox" value="4"> 周四</label>
@@ -165,7 +157,7 @@ npm run init-admin</pre>
       <!-- 定时任务 -->
       <section id="view-schedules" class="stack" hidden aria-labelledby="schTitle">
         <div class="page-head">
-          <div><h1 id="schTitle">定时任务</h1><p>全校所有班级的每日定时提醒。暂停的任务不会执行，恢复前请确认原因已经解决。</p></div>
+          <div><h1 id="schTitle">定时任务</h1></div>
         </div>
         <section class="panel"><div id="schedules" class="list"></div></section>
       </section>
@@ -173,13 +165,13 @@ npm run init-admin</pre>
       <!-- 大屏 -->
       <section id="view-displays" class="stack" hidden aria-labelledby="dspTitle">
         <div class="page-head">
-          <div><h1 id="dspTitle">大屏与设备</h1><p>在线状态、正在显示的内容，以及紧急广播。</p></div>
+          <div><h1 id="dspTitle">大屏与设备</h1></div>
         </div>
         <section class="panel"><div id="displays" class="list"></div></section>
         <section class="panel urgent-panel" aria-labelledby="ugTitleH">
-          <div class="panel-head"><h2 id="ugTitleH"><svg data-icon="alert"></svg>紧急广播</h2><p>立即抢占所选班级的大屏，优先级高于一切内容。发送前会再确认一次影响范围。</p></div>
+          <div class="panel-head"><h2 id="ugTitleH"><svg data-icon="alert"></svg>紧急广播</h2></div>
           <form id="urgentForm" class="grid2">
-            <label class="field"><span>班级</span><select id="ugClass"></select></label>
+            <label class="field"><span>班级</span><select id="ugClass" required></select></label>
             <label class="field"><span>自动下屏</span><select id="ugDuration"><option value="300">5 分钟后</option><option value="900">15 分钟后</option><option value="3600">1 小时后</option><option value="0">手动撤回</option></select></label>
             <label class="field span-all"><span>标题</span><input type="text" id="ugTitle" maxlength="30" required placeholder="例：全体注意"></label>
             <label class="field span-all"><span>正文</span><textarea id="ugBody" maxlength="300" required></textarea></label>
@@ -191,7 +183,7 @@ npm run init-admin</pre>
       <!-- 审计 -->
       <section id="view-audit" class="stack" hidden aria-labelledby="audTitle">
         <div class="page-head">
-          <div><h1 id="audTitle" tabindex="-1">操作记录</h1><p>谁在什么时候做了什么。最近 300 条，每页 20 条。</p></div>
+          <div><h1 id="audTitle" tabindex="-1">操作记录</h1></div>
           <div class="row">
             <label class="field inline-field"><span>类别</span>
               <select id="auditFilter">
@@ -226,29 +218,22 @@ npm run init-admin</pre>
       <section id="view-settings" class="stack" hidden aria-labelledby="setTitle">
         <div class="page-head"><div><h1 id="setTitle">系统设置</h1></div></div>
         <section class="panel">
-          <div class="panel-head"><h2>留言显示策略</h2></div>
           <label class="field"><span>教师发布的普通留言</span>
-            <select id="setPolicy"><option value="immediate">立即显示（即使正在上课）</option><option value="next_window">上课期间推迟到下一个课间显示</option></select>
-            <small>紧急广播不受此设置影响，仅管理员可用。</small>
+            <select id="setPolicy"><option value="immediate">立即显示</option><option value="next_window">在点人时段显示</option></select>
           </label>
           <button class="btn btn-primary btn-sm" id="setSave" type="button"><span>保存</span></button>
         </section>
         <section class="panel danger-zone">
-          <div class="panel-head"><h2>会话</h2><p>升级系统或怀疑密码泄露时，可以强制所有账号（包括你自己）重新登录。</p></div>
           <button class="btn btn-danger-quiet btn-sm" id="revokeAll" type="button"><span>强制所有人重新登录…</span></button>
         </section>
       </section>
     </main>
   </div>
-  <footer class="project-credit" aria-label="项目信息">
-    <span>由 xzygreen 开发 ·</span>
-    <a href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer">GitHub 开源项目</a>
-    <span>· 基于 MIT License 发布</span>
-  </footer>
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="ui.js?v=2.1.6"></script>
-<script src="admin.js?v=2.1.6"></script>
+<script src="ui.js?v=2.1.7"></script>
+<script src="version.js?v=2.1.7"></script>
+<script src="admin.js?v=2.1.7"></script>
 </body>
 </html>

@@ -61,7 +61,7 @@ function syncSoundUi() {
   button.querySelector('.wave').style.display = soundOn ? '' : 'none';
   button.querySelector('.mute').style.display = soundOn ? 'none' : '';
   $('soundText').textContent = soundOn ? '提示音 开' : '提示音 关';
-  button.setAttribute('aria-label', soundOn ? '提示音已开启，点击关闭' : '提示音已关闭，点击开启');
+  button.setAttribute('aria-label', soundOn ? '关闭提示音' : '开启提示音');
   $('audioTip').classList.toggle('show', soundOn && audioLocked());
 }
 
@@ -214,7 +214,7 @@ function paintAcknowledgements(ev) {
   for (const item of $('names').children) {
     const done = acked.has(item.dataset.name);
     item.classList.toggle('acked', done);
-    item.setAttribute('aria-label', item.dataset.name + (done ? '，已收到' : '，点一下确认收到'));
+    item.setAttribute('aria-label', item.dataset.name + (done ? '，已收到' : '，确认收到'));
     item.setAttribute('aria-pressed', String(done));
   }
   renderAck(ev);
@@ -477,7 +477,7 @@ function render(ev, isNew) {
     const name = item.dataset.name;
     const done = acked.has(name);
     item.classList.toggle('acked', done);
-    item.setAttribute('aria-label', done ? name + '，已收到' : name + '，点一下确认收到');
+    item.setAttribute('aria-label', done ? name + '，已收到' : name + '，确认收到');
     item.setAttribute('aria-pressed', String(done));
   };
 
@@ -558,7 +558,7 @@ function connect() {
     try { reason = JSON.parse(event.data).reason || ''; } catch {}
     if (reason === 'class_removed') {
       es.close();
-      showBindError('班级绑定错误', '服务器上已没有班级「' + classId + '」，请检查大屏链接的 class 参数。');
+      showBindError('班级绑定错误', '班级「' + classId + '」已不可用，请向管理员获取新的大屏链接。');
       return;
     }
     setConn(false, '服务重启中');
@@ -595,22 +595,22 @@ async function loadRemoteConfig() {
   if (!response) return retryConfig('无法连接服务器，请检查网络');
   if (response.status === 404 && config && config.error === 'CLASS_NOT_FOUND') {
     setConn(false, '班级不存在');
-    showBindError('班级绑定错误', '服务器上没有班级「' + classId + '」，请检查大屏链接的 class 参数。');
+    showBindError('班级绑定错误', '班级「' + classId + '」不存在，请向管理员获取大屏链接。');
     return;
   }
   if (!config || !response.ok || !config.ok) {
-    let detail = '服务器返回 HTTP ' + response.status + '，且不是大屏接口响应';
+    let detail = '服务暂时不可用，请联系管理员';
     if (response.headers.get('cf-mitigated') === 'challenge') {
-      detail = '请求被 Cloudflare 人机验证拦截，请让管理员对 /api/* 关闭 Managed Challenge';
+      detail = '连接被安全验证拦截，请联系管理员';
     } else if (response.headers.has('www-authenticate')) {
-      detail = '服务器仍启用了 HTTP Basic Auth，请更新 Nginx 配置并关闭 auth_basic';
+      detail = '连接需要额外认证，请联系管理员';
     }
     setConn(false, '连接受阻');
     return retryConfig(detail);
   }
   if (config.classId !== classId) {
     setConn(false, '班级不匹配');
-    showBindError('班级绑定错误', '服务器返回了其它班级的数据，已拒绝连接。');
+    showBindError('班级绑定错误', '班级不匹配，请向管理员重新获取大屏链接。');
     return;
   }
 
@@ -643,12 +643,12 @@ async function loadRemoteConfig() {
 
   if (!classId) {
     setConn(false, '未绑定');
-    showBindError('此设备尚未绑定班级', '请在大屏链接后加上班级参数，例如 /display?class=class-a。不会默认进入任何班级。');
+    showBindError('此设备尚未绑定班级', '请向管理员获取本班大屏链接。');
     return;
   }
   if (!CLASS_ID_RE.test(classId)) {
     setConn(false, '未绑定');
-    showBindError('班级绑定错误', '班级参数格式不正确：' + classId);
+    showBindError('班级绑定错误', '大屏链接无效，请向管理员重新获取。');
     return;
   }
 

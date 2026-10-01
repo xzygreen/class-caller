@@ -39,9 +39,9 @@ async function api(method, path, body) {
   const basic = res.headers.has('www-authenticate');
   let gatewayError = '';
   const validJson = Boolean(json && typeof json === 'object' && !Array.isArray(json) && typeof json.ok === 'boolean');
-  if (!validJson && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请对 /api/* 关闭 Managed Challenge';
-  else if (!validJson && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
-  else if (!validJson) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
+  if (!validJson && challenged) gatewayError = '连接被安全验证拦截，请联系部署负责人';
+  else if (!validJson && basic) gatewayError = '连接需要额外认证，请联系部署负责人';
+  else if (!validJson) gatewayError = '服务暂时不可用，请稍后重试；仍失败请联系部署负责人';
   if (res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) gateOut('登录已失效，请重新登录');
   if (res.status === 403 && json && json.error === 'ADMIN_ONLY') gateOut('该账号不是管理员');
   return { status: res.status, ok: res.ok && validJson && json.ok, json, gatewayError };
@@ -138,7 +138,7 @@ window.addEventListener('hashchange', () => {
 function renderWindowPill(cw) {
   if (!cw) return;
   $('windowPill').className = 'status ' + (cw.open ? 'ok' : 'warn');
-  $('windowText').textContent = cw.open ? `全校可点人至 ${cw.current.end}` : (cw.next ? `上课中 · ${cw.next.date === cw.now.date ? '' : cw.next.weekdayName + ' '}${cw.next.start} 可点` : '今天没有可点人时段');
+  $('windowText').textContent = cw.open ? `全校可点人至 ${cw.current.end}` : (cw.next ? `下次 ${cw.next.date === cw.now.date ? '' : cw.next.weekdayName + ' '}${cw.next.start} 可点人` : '暂无可点人时段');
 }
 function renderFleet(d) {
   const total = d.displays.length;
@@ -181,7 +181,7 @@ async function loadOverview() {
   if (!total) {
     const ok = el('div', 'panel all-clear');
     ok.append(icon('check'), el('div', '', ''));
-    ok.lastChild.append(el('strong', '', '今天没有需要处理的事'), el('span', '', '没有待审批的申请，所有大屏在线，定时任务都在正常运行。'));
+    ok.lastChild.append(el('strong', '', '暂无待处理事项'));
     todo.append(ok);
   } else {
     const wrap = el('div', 'todo-grid');
@@ -199,18 +199,18 @@ async function loadOverview() {
     };
     if (d.pendingRequests.length) group('待审批申请', d.pendingRequests.length, 'warn', 'inbox', d.pendingRequests.slice(0, 5).map((r) => requestRow(r, loadOverview)), d.pendingRequests.length > 5 ? { label: '查看全部', fn: () => switchView('requests') } : null);
     if (d.offlineDisplays.length) {
-      group('离线的大屏', d.offlineDisplays.length, 'bad', 'monitorOff', d.offlineDisplays.map((x) => itemRow('bad', stampFor(x.code, x.color, 'lead lg'), `${x.className} 大屏离线`, '没有任何浏览器大屏或原生程序连接到该班。检查教室电脑是否开机、联网，链接是否为 /display?class=' + x.classId,
+      group('离线的大屏', d.offlineDisplays.length, 'bad', 'monitorOff', d.offlineDisplays.map((x) => itemRow('bad', stampFor(x.code, x.color, 'lead lg'), `${x.className} 大屏离线`, '请检查教室电脑是否开机联网。',
         [btn('复制大屏链接', 'btn-ghost btn-sm', () => copyDisplayLink(x.classId))])), { label: '查看设备', fn: () => switchView('displays') });
     }
     if (d.pausedSchedules.length) group('暂停的定时任务', d.pausedSchedules.length, 'bad', 'pause', d.pausedSchedules.map((s) => scheduleRow(s, loadOverview)), null);
     if (windowIssue) {
-      group('作息异常', 1, 'warn', 'clock', [itemRow('warn', 'clock', '接下来一周没有任何可点人时段', '老师现在无法点人，定时提醒也不会执行。请检查全校作息的上课日与时段。', [btn('打开全校作息', 'btn-secondary btn-sm', () => switchView('windows'))])], null);
+      group('作息异常', 1, 'warn', 'clock', [itemRow('warn', 'clock', '接下来一周没有任何可点人时段', '', [btn('打开全校作息', 'btn-secondary btn-sm', () => switchView('windows'))])], null);
     }
     todo.append(wrap);
   }
 
   const ov = $('ovDisplays'); ov.innerHTML = '';
-  if (!d.displays.length) ov.append(emptyState('还没有班级', '新建班级后，每个班的大屏状态会显示在这里。', { label: '新建班级', fn: () => { switchView('classes'); newClass(); } }));
+  if (!d.displays.length) ov.append(emptyState('还没有班级', '', { label: '新建班级', fn: () => { switchView('classes'); newClass(); } }));
   for (const x of d.displays) ov.append(dossierTile(x));
 }
 
@@ -220,7 +220,8 @@ function dossierTile(x) {
   if (x.color) t.dataset.color = x.color;
   const head = el('header');
   const name = el('div', 'd-name');
-  name.append(el('strong', '', x.className), el('small', '', x.displays ? '大屏在线' + (x.displays > 1 ? ' · ' + x.displays + ' 台' : '') : '大屏离线'));
+  name.append(el('strong', '', x.className));
+  if (x.displays > 1) name.append(el('small', '', x.displays + ' 台大屏'));
   const st = el('span', 'status ' + (x.displays ? 'ok' : 'bad'));
   st.append(icon(x.displays ? 'monitor' : 'monitorOff'), x.displays ? '在线' : '离线');
   head.append(stampFor(x.code, x.color, 'lg'), name, st);
@@ -264,13 +265,13 @@ function requestRow(r, reload) {
       const x = await api('POST', `/api/admin/requests/${r.id}/approve`, {});
       if (!x.ok) return toast(errText(x, '操作失败'), true);
       reload(); refreshOverview();
-      toast(`已批准 ${who} 管理 ${r.className}，立即生效`, { action: { label: '撤销', fn: async () => {
+      toast(`已批准 ${who} 管理 ${r.className}`, { action: { label: '撤销', fn: async () => {
         const u = await api('POST', '/api/admin/memberships/revoke', { userId: r.userId, classId: r.classId });
         if (u.ok) { toast('已撤销这次批准'); reload(); } else toast(errText(u, '撤销失败'), true);
       } } });
     }, 'check'));
     acts.push(btn('拒绝…', 'btn-secondary btn-sm', async () => {
-      const note = await promptDialog({ title: '拒绝 ' + who + ' 的申请', icon: 'x', text: '申请管理：' + r.className, label: '拒绝理由（会显示给教师，可留空）', maxLength: 200, confirm: '拒绝申请', danger: true });
+      const note = await promptDialog({ title: '拒绝 ' + who + ' 的申请', icon: 'x', text: '申请管理：' + r.className, label: '给教师的拒绝理由（可选）', maxLength: 200, confirm: '拒绝申请', danger: true });
       if (note === null) return;
       const x = await api('POST', `/api/admin/requests/${r.id}/reject`, { note: note.trim() });
       if (x.ok) { toast('已拒绝'); reload(); refreshOverview(); } else toast(errText(x, '操作失败'), true);
@@ -286,7 +287,7 @@ async function loadRequests() {
   const res = await api('GET', '/api/admin/requests' + (st ? '?status=' + st : ''));
   if (!res.ok) return fill(box, errorState(errText(res, '申请加载失败'), loadRequests));
   box.innerHTML = '';
-  if (!res.json.requests.length) box.append(emptyState(st === 'pending' ? '没有待审批的申请' : '没有符合条件的申请', st === 'pending' ? '教师在教师端提交申请后会出现在这里。' : ''));
+  if (!res.json.requests.length) box.append(emptyState(st === 'pending' ? '没有待审批的申请' : '没有符合条件的申请'));
   for (const r of res.json.requests) box.append(requestRow(r, loadRequests));
 }
 $('reqStatus').onchange = loadRequests;
@@ -303,7 +304,7 @@ function colorField(value) {
     l.append(r, s);
     row.append(l);
   }
-  box.append(row, el('small', '', '只用于编号章和浅色底，帮助区分班级。'));
+  box.append(row);
   return box;
 }
 function field(label, input, hint) {
@@ -318,15 +319,28 @@ function input(type, name, attrs) {
   return i;
 }
 
+function autoClearField(seconds) {
+  const box = el('div');
+  const mode = el('select');
+  mode.innerHTML = '<option value="auto">自动清屏</option><option value="manual">手动清屏</option>';
+  mode.value = seconds ? 'auto' : 'manual';
+  const duration = input('number', 'autoClearSeconds', { min: 1, max: 3600, required: true, value: seconds || 30 });
+  const durationField = field('等待秒数', duration);
+  const update = () => { durationField.hidden = duration.disabled = mode.value === 'manual'; };
+  mode.onchange = update; update();
+  box.append(field('点人清屏', mode), durationField);
+  return box;
+}
+
 function newClass() {
   const body = el('div');
   body.append(
     // pattern 按 v 标志编译：字符类里的连字符必须转义，否则整条规则失效
-    field('班级标识', input('text', 'id', { required: true, pattern: '[a-z0-9][a-z0-9\\-]{0,31}', placeholder: 'class-23', autocapitalize: 'off', spellcheck: false }), '小写字母、数字、连字符。用于大屏链接，创建后不能修改。'),
+    field('班级标识', input('text', 'id', { required: true, pattern: '[a-z0-9][a-z0-9\\-]{0,31}', maxLength: 32, title: '1–32 位小写字母、数字或连字符，以字母或数字开头', placeholder: 'class-23', autocapitalize: 'off', spellcheck: false })),
     field('班级名称', input('text', 'name', { required: true, maxLength: 32, placeholder: '初三23班' })),
-    field('短编号', input('text', 'code', { maxLength: 4, placeholder: '23' }), '不超过 4 个字，显示在编号章和大屏上。'),
+    field('短编号', input('text', 'code', { maxLength: 4, placeholder: '23' })),
     colorField('blue'),
-    field('点人自动清屏（秒）', input('number', 'autoClearSeconds', { min: 0, max: 3600, value: 30 }), '0 表示常驻，直到老师手动清屏。'),
+    autoClearField(30),
   );
   let created = '';
   const drawer = openDrawer({
@@ -335,7 +349,7 @@ function newClass() {
       const id = f.elements.id.value.trim();
       const res = await api('POST', '/api/admin/classes', {
         id, name: f.elements.name.value.trim(), code: f.elements.code.value.trim() || undefined, color: f.elements.color.value,
-        autoClearSeconds: Number(f.elements.autoClearSeconds.value), students: [],
+        autoClearSeconds: (f.elements.autoClearSeconds.disabled ? 0 : Number(f.elements.autoClearSeconds.value)), students: [],
       });
       if (!res.ok) return { error: errText(res, '新增失败'), fields: res.json && res.json.error === 'CLASS_ID_TAKEN' ? ['id'] : [] };
       toast('已新建班级，请录入名单');
@@ -355,7 +369,7 @@ async function loadClasses(focusId) {
   if (!res.ok) return fill(box, errorState(errText(res, '班级列表加载失败'), () => loadClasses()));
   classesCache = res.json.classes;
   box.innerHTML = '';
-  if (!classesCache.length) box.append(emptyState('还没有班级', '新建第一个班级，录入名单，再把大屏链接配置到教室电脑上。', { label: '新建班级', fn: newClass }, true));
+  if (!classesCache.length) box.append(emptyState('还没有班级', '', { label: '新建班级', fn: newClass }, true));
   for (const c of classesCache) box.append(classCard(c));
   if (typeof focusId === 'string') {
     // 新班级排在列表末尾，可能被上面的班级挤出视口：直接展开它的名单框并聚焦
@@ -386,7 +400,7 @@ function classCard(c) {
     if (!archived) {
       const ok = await confirmDialog({
         title: '归档 ' + c.name + '？', confirm: '归档班级', danger: true,
-        impact: ['该班大屏连接会被关闭，大屏显示「班级绑定错误」', '教师将无法再操作该班（授权记录保留）', '该班的定时任务会暂停', '随时可以恢复'],
+        impact: ['大屏停止连接，教师暂时无法操作该班', '定时任务将暂停，名单与授权保留'],
       });
       if (!ok) return;
     }
@@ -421,7 +435,7 @@ function classCard(c) {
   const lab = el('label', 'field');
   lab.append(el('span', '', c.name + ' 名单'));
   const ta = el('textarea'); ta.value = students.join('\n');
-  ta.placeholder = '每行一个姓名；也可以直接粘贴用逗号、顿号或空格分隔的名单';
+  ta.placeholder = '每行一个姓名';
   ta.rows = 8;
   lab.append(ta);
   const row = el('div', 'row end');
@@ -470,19 +484,19 @@ function copyDisplayLink(id) {
 function editClass(c) {
   const body = el('div');
   const mode = el('select'); mode.name = 'mode';
-  mode.innerHTML = '<option value="off">关闭</option><option value="protocol">浏览器协议唤起（protocol）</option><option value="native">原生监听程序（native）</option>';
+  mode.innerHTML = '<option value="off">关闭</option><option value="protocol">浏览器唤起</option><option value="native">独立启动器</option>';
   body.append(
     field('名称', input('text', 'name', { maxLength: 32, required: true, value: c.name })),
     field('短编号', input('text', 'code', { maxLength: 4, value: c.code })),
     colorField(c.color),
-    field('点人自动清屏（秒）', input('number', 'autoClearSeconds', { min: 0, max: 3600, value: c.autoClearSeconds }), '0 表示常驻。'),
-    field('本地程序启动器', mode, '点人时在教室电脑上启动本地程序；不需要就保持关闭。'),
+    autoClearField(c.autoClearSeconds),
+    field('本地程序启动器', mode),
   );
   mode.value = c.launcher.mode;
   openDrawer({
     title: '编辑 ' + c.name, body,
     onSubmit: async (f) => {
-      const x = await api('PATCH', `/api/admin/classes/${c.id}`, { name: f.elements.name.value.trim(), code: f.elements.code.value.trim(), color: f.elements.color.value, autoClearSeconds: Number(f.elements.autoClearSeconds.value), launcher: { mode: f.elements.mode.value, freshSeconds: c.launcher.freshSeconds } });
+      const x = await api('PATCH', `/api/admin/classes/${c.id}`, { name: f.elements.name.value.trim(), code: f.elements.code.value.trim(), color: f.elements.color.value, autoClearSeconds: (f.elements.autoClearSeconds.disabled ? 0 : Number(f.elements.autoClearSeconds.value)), launcher: { mode: f.elements.mode.value, freshSeconds: c.launcher.freshSeconds } });
       if (!x.ok) return { error: errText(x, '保存失败') };
       toast('已保存'); loadClasses();
       return true;
@@ -496,19 +510,22 @@ function newUser() {
   const role = el('select'); role.name = 'role';
   role.innerHTML = '<option value="teacher">教师</option><option value="admin">管理员</option>';
   body.append(
-    field('登录名', input('text', 'username', { required: true, autocapitalize: 'off', spellcheck: false })),
+    field('登录名', input('text', 'username', { required: true, minLength: 3, maxLength: 32, pattern: '[a-zA-Z0-9][a-zA-Z0-9._\\-]{2,31}', title: '3–32 位字母、数字、点、下划线或连字符，以字母或数字开头', autocapitalize: 'off', spellcheck: false })),
     field('姓名', input('text', 'displayName', { required: true, maxLength: 20 })),
     field('职务（可选）', input('text', 'title', { maxLength: 12, placeholder: '例：数学老师' })),
-    field('初始密码', input('text', 'password', { required: true, minLength: 8, autocomplete: 'off' }), '至少 8 位。本人首次登录时必须修改。'),
-    field('角色', role, '管理员可以管理全校所有班级。'),
+    field('初始密码', input('text', 'password', { required: true, minLength: 8, maxLength: 128, autocomplete: 'off' })),
+    field('角色', role),
   );
   openDrawer({
     title: '创建账号', body, submit: '创建账号',
     onSubmit: async (f) => {
       const e = f.elements;
+      if (e.role.value === 'admin' && !await confirmDialog({
+        title: '创建管理员账号？', text: e.displayName.value.trim() + ' 将拥有全校班级和账号的管理权限。', confirm: '创建管理员',
+      })) return { error: '未创建账号' };
       const res = await api('POST', '/api/admin/users', { username: e.username.value.trim(), displayName: e.displayName.value.trim(), title: e.title.value.trim(), password: e.password.value, role: e.role.value });
       if (!res.ok) return { error: errText(res, '创建失败'), fields: res.json && res.json.error === 'USERNAME_TAKEN' ? ['username'] : [] };
-      toast('已创建账号，请把初始密码告知本人；首次登录必须修改');
+      toast('已创建账号，请把初始密码告知本人');
       loadUsers();
       return true;
     },
@@ -578,7 +595,7 @@ function renderUsers() {
     tb.append(tr);
   }
   $('userCount').textContent = usersCache.length ? (q ? `匹配 ${shown} / ${usersCache.length} 个账号` : `共 ${usersCache.length} 个账号`) : '';
-  if (!shown) { const tr = el('tr'); const x = el('td'); x.colSpan = 7; x.dataset.label = ''; x.append(emptyState(q ? '没有匹配的账号' : '还没有账号', q ? '换个关键词试试。' : '')); tr.append(x); tb.append(tr); }
+  if (!shown) { const tr = el('tr'); const x = el('td'); x.colSpan = 7; x.dataset.label = ''; x.append(emptyState(q ? '没有匹配的账号' : '还没有账号', '', q ? { label: '清空搜索', fn: () => { $('userFilter').value = ''; renderUsers(); } } : null)); tr.append(x); tb.append(tr); }
 }
 
 async function grantAccess(u) {
@@ -589,7 +606,7 @@ async function grantAccess(u) {
   const f = field('班级', sel);
   const ok = await confirmDialog({
     title: '为 ' + u.displayName + ' 授权班级', icon: 'shield', confirm: '确认授权', node: f,
-    impact: ['授权立即生效：可以对该班点人、发班级留言、创建定时提醒', '该教师对这个班的待审批申请会一并标记为已批准', '随时可以在这里撤销'],
+    text: '授权后可点人、发布留言和创建定时提醒。',
   });
   if (!ok) return;
   const cid = sel.value;
@@ -603,7 +620,7 @@ async function revokeAccess(u, m) {
   const affected = activeSchedulesOf(u.id, m.classId).length;
   const ok = await confirmDialog({
     title: `撤销 ${u.displayName} 对 ${m.className} 的权限？`, danger: true, confirm: '撤销权限',
-    impact: ['立即生效，该教师不能再操作这个班', affected ? `其在该班创建的 ${affected} 个定时任务会自动暂停` : '该教师在这个班没有运行中的定时任务', '可以在提示条里撤销，重新授权后暂停的任务会恢复'],
+    impact: ['该教师将无法操作这个班', affected ? `其在该班创建的 ${affected} 个定时任务将暂停` : '没有运行中的定时任务'],
   });
   if (!ok) return;
   const r = await api('POST', '/api/admin/memberships/revoke', { userId: u.id, classId: m.classId });
@@ -625,7 +642,6 @@ async function toggleUser(u) {
         '立即退出所有设备上的登录，之后无法再登录',
         u.role === 'admin' ? '失去管理端权限' : (u.classes.length ? `不能再操作 ${u.classes.map((m) => m.className).join('、')}（授权记录保留）` : '目前没有授权班级'),
         n ? `其创建的 ${n} 个定时任务会自动暂停` : '没有运行中的定时任务',
-        '可以随时重新启用',
       ],
     });
     if (!ok) return;
@@ -644,14 +660,14 @@ async function toggleUser(u) {
 async function resetPassword(u) {
   const ok = await confirmDialog({
     title: '重置 ' + u.displayName + ' 的密码？', icon: 'key', confirm: '生成临时密码',
-    impact: ['旧密码立即失效，所有设备退出登录', '会生成一个只显示一次的临时密码', '本人用临时密码登录后必须改成自己的密码'],
+    impact: ['旧密码失效，所有设备退出登录', '本人下次登录需设置新密码'],
   });
   if (!ok) return;
   const r = await api('PATCH', `/api/admin/users/${u.id}`, { resetPassword: true });
   if (!r.ok) return toast(errText(r, '重置失败'), true);
   const code = el('pre', 'temp-pwd', r.json.tempPassword);
   const copy = await confirmDialog({
-    title: '已重置 ' + u.displayName + ' 的密码', icon: 'key', text: '临时密码只显示这一次，请当面或通过可信渠道告知本人：',
+    title: '已重置 ' + u.displayName + ' 的密码', icon: 'key', text: '请保存临时密码，关闭后无法再次查看。',
     node: code, confirm: '复制并关闭', cancel: '关闭',
   });
   if (copy && navigator.clipboard) navigator.clipboard.writeText(r.json.tempPassword).then(() => toast('临时密码已复制'), () => {});
@@ -666,7 +682,7 @@ async function deleteUser(u) {
       u.classes.length ? `移除 ${u.classes.length} 个班级授权：${u.classes.map((m) => m.className).join('、')}` : '没有班级授权',
       n ? `一并删除其创建的 ${n} 个定时任务` : '没有定时任务',
       '其申请记录一并移除；已发出的通知记录保留',
-      '此操作不可恢复。只想临时禁止登录，请用「停用」',
+      '删除后不能恢复',
     ],
   });
   if (!ok) return;
@@ -679,7 +695,7 @@ function editUser(u) {
   const body = el('div');
   body.append(
     field('姓名', input('text', 'displayName', { maxLength: 20, required: true, value: u.displayName })),
-    field('职务', input('text', 'title', { maxLength: 12, value: u.title || '' }), '显示在大屏上，例：「数学老师 · 张老师正在找」。'),
+    field('职务（可选）', input('text', 'title', { maxLength: 12, value: u.title || '' })),
   );
   openDrawer({
     title: '编辑 ' + u.username, body,
@@ -701,14 +717,14 @@ async function loadWindows() {
   renderWindows();
 }
 function renderWindows() {
-  $('tzLabel').textContent = windowsDraft.timezone;
+  $('tzLabel').textContent = windowsDraft.timezone === 'Asia/Shanghai' ? '北京时间' : windowsDraft.timezone;
   for (const i of $('wDays').querySelectorAll('input')) i.checked = windowsDraft.weekdays.includes(Number(i.value));
   const tb = $('wTable').querySelector('tbody'); tb.innerHTML = '';
-  if (!windowsDraft.windows.length) { const tr = el('tr'); const x = el('td'); x.colSpan = 4; x.dataset.label = ''; x.append(emptyState('没有任何时段', '没有时段时老师全天都不能点人。点「添加时段」或「恢复默认作息」。')); tr.append(x); tb.append(tr); }
+  if (!windowsDraft.windows.length) { const tr = el('tr'); const x = el('td'); x.colSpan = 4; x.dataset.label = ''; x.append(emptyState('暂无可点人时段')); tr.append(x); tb.append(tr); }
   windowsDraft.windows.forEach((w, idx) => {
     const tr = el('tr');
-    const s = el('input'); s.type = 'time'; s.value = w.start; s.step = 60; s.setAttribute('aria-label', '第 ' + (idx + 1) + ' 个时段开始'); s.onchange = () => { w.start = s.value; };
-    const e = el('input'); e.type = 'time'; e.value = w.end; e.step = 60; e.setAttribute('aria-label', '第 ' + (idx + 1) + ' 个时段结束'); e.onchange = () => { w.end = e.value; };
+    const s = el('input'); s.type = 'time'; s.required = true; s.value = w.start; s.step = 60; s.setAttribute('aria-label', '第 ' + (idx + 1) + ' 个时段开始'); s.onchange = () => { w.start = s.value; };
+    const e = el('input'); e.type = 'time'; e.required = true; e.value = w.end; e.step = 60; e.setAttribute('aria-label', '第 ' + (idx + 1) + ' 个时段结束'); e.onchange = () => { w.end = e.value; };
     const l = el('input'); l.type = 'text'; l.value = w.label || ''; l.maxLength = 30; l.placeholder = '课间'; l.setAttribute('aria-label', '第 ' + (idx + 1) + ' 个时段说明'); l.oninput = () => { w.label = l.value; };
     const d = btn('删除', 'btn-ghost danger btn-sm', () => { windowsDraft.windows.splice(idx, 1); renderWindows(); }, 'trash');
     tr.append(td('开始', s), td('结束', e), td('说明', l), td('', d));
@@ -723,15 +739,16 @@ $('wDefault').onclick = () => {
   windowsDraft.weekdays = [1, 2, 3, 4, 5];
   windowsDraft.windows = [['08:45', '09:00', '课间'], ['09:45', '10:15', '课间'], ['11:00', '11:15', '课间'], ['11:35', '12:30', '午餐、过渡时间、午自习'], ['13:00', '13:10', '午休结束后的课间'], ['13:55', '14:15', '课间'], ['15:00', '15:15', '课间'], ['16:00', '16:15', '课间']].map(([start, end, label]) => ({ start, end, label }));
   renderWindows();
-  toast('已填入默认作息，点「保存作息」后生效');
+  toast('已填入默认作息，尚未保存');
 };
 $('wSave').onclick = async () => {
+  for (const input of $('wTable').querySelectorAll('input')) if (!input.reportValidity()) return;
   const ok = await confirmDialog({
     title: '保存全校作息？', icon: 'clock', confirm: '保存并生效',
     impact: [
       '立即对全校所有班级生效',
       `上课日：${windowsDraft.weekdays.length ? windowsDraft.weekdays.map((d) => WEEKDAYS[d]).join('、') : '无'}；共 ${windowsDraft.windows.length} 个可点人时段`,
-      '时间不在新时段内的定时任务会自动暂停，保存后会告诉你暂停了几个',
+      '不符合新作息的定时任务将暂停',
     ],
   });
   if (!ok) return;
@@ -750,7 +767,7 @@ function scheduleRow(s, reload) {
   const tone = !s.enabled ? '' : (paused ? 'bad' : 'ok');
   const t = el('strong');
   t.append(el('span', 'num', s.time + '　'), `${s.className || classNameOf(s.classId)} · ${s.names.join('、')}`);
-  const meta = [s.weekdayNames.join('、'), s.message || '无附加说明', '创建：' + s.createdByName];
+  const meta = [s.weekdayNames.join('、'), s.message, '创建：' + s.createdByName].filter(Boolean);
   if (!s.enabled) meta.push('已停用'); else if (paused) meta.push('已暂停：' + (PAUSE_REASONS[s.pauseReason] || s.pauseReason)); else if (s.nextRunAt) meta.push('下次 ' + dt(s.nextRunAt));
   if (s.lastResult) meta.push('最近：' + ({ sent: '已发送', missed: '已错过', skipped: '已跳过', failed: '失败' }[s.lastResult.status] || s.lastResult.status));
   const running = s.enabled && !paused;
@@ -762,7 +779,7 @@ function scheduleRow(s, reload) {
     else toast('已恢复');
   });
   const del = btn('删除…', 'btn-ghost danger btn-sm', async () => {
-    const ok = await confirmDialog({ title: '删除这条定时任务？', danger: true, confirm: '删除任务', impact: [`${s.className || s.classId} 每天 ${s.time} 不再自动点 ${s.names.join('、')}`, '创建者：' + s.createdByName, '删除后不能恢复；只想临时停止请用「停用」'] });
+    const ok = await confirmDialog({ title: '删除这条定时任务？', danger: true, confirm: '删除任务', impact: [`${s.className || s.classId} · ${s.weekdayNames.join('、')} ${s.time} · ${s.names.join('、')}`, '创建者：' + s.createdByName, '删除后不能恢复'] });
     if (!ok) return;
     const r = await api('DELETE', `/api/admin/schedules/${s.id}`);
     if (r.ok) { toast('已删除'); reload(); refreshOverview(); } else toast(errText(r, '删除失败'), true);
@@ -776,7 +793,7 @@ async function loadSchedules() {
   if (!res.ok) return fill(box, errorState(errText(res, '定时任务加载失败'), loadSchedules));
   box.innerHTML = '';
   const list = res.json.schedules.slice().sort((a, b) => (a.status === 'paused' ? 0 : 1) - (b.status === 'paused' ? 0 : 1) || a.time.localeCompare(b.time));
-  if (!list.length) box.append(emptyState('没有定时任务', '教师可以在教师端「定时提醒」里为本班创建。'));
+  if (!list.length) box.append(emptyState('没有定时任务'));
   for (const s of list) box.append(scheduleRow(s, loadSchedules));
 }
 
@@ -819,7 +836,7 @@ async function loadDisplays() {
   const d = await refreshOverview();
   if (!d) return fill(box, errorState('大屏状态加载失败', loadDisplays));
   box.innerHTML = '';
-  if (!d.displays.length) box.append(emptyState('还没有班级', '新建班级后，把「复制大屏链接」得到的地址配置到教室电脑上。'));
+  if (!d.displays.length) box.append(emptyState('还没有班级', '', { label: '新建班级', fn: () => { switchView('classes'); newClass(); } }));
   for (const x of d.displays) box.append(displayRow(x, loadDisplays));
   const cur = $('ugClass').value;
   $('ugClass').innerHTML = '';
@@ -837,8 +854,8 @@ $('urgentForm').onsubmit = async (e) => {
     title: '向 ' + x.className + ' 发送紧急广播？', danger: true, confirm: '立即抢占大屏',
     impact: [
       '立即抢占 ' + x.className + ' 大屏' + (x.displays ? '' : '（注意：该班大屏当前离线）'),
-      cur ? '正在显示的' + currentText(cur) + ' 会被挤到等待队列，广播结束后回来' : '大屏当前空闲',
-      '大屏顶部显示红色信号条和「紧急通知」；' + dur.options[dur.selectedIndex].textContent + '自动下屏',
+      cur ? currentText(cur) + ' 将暂停显示，广播结束后恢复' : '大屏当前空闲',
+      dur.value === '0' ? '手动撤回' : dur.options[dur.selectedIndex].textContent + '下屏',
     ],
   });
   if (!ok) return;
@@ -930,7 +947,7 @@ function renderAuditPage() {
   const tb = $('auditTable').querySelector('tbody');
   tb.replaceChildren();
   updateAuditPager();
-  if (!auditRows.length) return auditPlaceholder(emptyState('没有记录', $('auditFilter').value ? '这个类别下还没有操作。' : ''));
+  if (!auditRows.length) return auditPlaceholder(emptyState($('auditFilter').value ? '没有符合条件的记录' : '没有记录'));
   const start = auditPage * AUDIT_PAGE_SIZE;
   for (const a of auditRows.slice(start, start + AUDIT_PAGE_SIZE)) {
     const tr = el('tr');
@@ -1000,11 +1017,11 @@ $('setSave').onclick = async () => {
 $('revokeAll').onclick = async () => {
   const ok = await confirmDialog({
     title: '强制所有人重新登录？', danger: true, confirm: '全部退出登录',
-    impact: ['所有教师和管理员在所有设备上立即退出登录', '你自己也会被登出', '大屏不需要登录，不受影响'],
+    impact: ['所有教师和管理员（包括你）将退出登录', '大屏不受影响'],
   });
   if (!ok) return;
   const r = await api('POST', '/api/admin/sessions/revoke-all', {});
-  if (r.ok) { toast(`已撤销 ${r.json.revoked} 个会话`); gateOut('会话已全部撤销，请重新登录'); }
+  if (r.ok) { toast('所有账号已退出登录'); gateOut('请重新登录'); }
   else toast(errText(r, '操作失败'), true);
 };
 

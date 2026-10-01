@@ -58,9 +58,9 @@ async function api(method, path, body) {
   const basic = res.headers.has('www-authenticate');
   let gatewayError = '';
   const validJson = Boolean(json && typeof json === 'object' && !Array.isArray(json) && typeof json.ok === 'boolean');
-  if (!validJson && challenged) gatewayError = '请求被 Cloudflare 人机验证拦截。请让管理员对 /api/* 关闭 Managed Challenge 后重试';
-  else if (!validJson && basic) gatewayError = '服务器仍启用了 HTTP Basic Auth。请更新 Nginx 配置并关闭 auth_basic';
-  else if (!validJson) gatewayError = '服务器网关返回了非应用响应（HTTP ' + res.status + '），请检查 Nginx 或 Cloudflare 配置';
+  if (!validJson && challenged) gatewayError = '连接被安全验证拦截，请联系管理员';
+  else if (!validJson && basic) gatewayError = '连接需要额外认证，请联系管理员';
+  else if (!validJson) gatewayError = '服务暂时不可用，请稍后重试；仍失败请联系管理员';
   if (user === me && res.status === 401 && json && ['UNAUTHORIZED', 'ACCOUNT_DISABLED'].includes(json.error)) {
     gateOut(json.error === 'ACCOUNT_DISABLED' ? '账号已停用，请联系管理员' : '登录已失效，请重新登录');
   }
@@ -102,7 +102,7 @@ $('toRegister').onclick = () => showGate('registerForm');
 $('toLogin').onclick = () => showGate('loginForm');
 $('forgot').onclick = () => {
   const n = $('loginInfo');
-  n.textContent = '请联系管理员重置密码。管理员会给你一个临时密码，用它登录后需要立即改成自己的密码。';
+  n.textContent = '请联系管理员重置密码。';
   n.hidden = false;
 };
 
@@ -126,7 +126,7 @@ $('registerForm').onsubmit = async (e) => {
   setBusy($('regBtn'), false);
   if (!res.ok) { $('regErr').textContent = errText(res, '注册失败'); return; }
   $('regPwd').value = '';
-  toast('注册成功。下一步：申请管理班级');
+  toast('注册成功');
   await enter(res.json.user);
 };
 
@@ -181,7 +181,6 @@ async function showHome() {
   history.replaceState(null, '', location.pathname);
   $('home').hidden = false;
   $('requestPanel').hidden = true;
-  $('homeIntro').textContent = '进入班级开始点人。';
   homeClassesState = '';
   $('klassView').hidden = true;
   $('tabs').hidden = true;
@@ -191,7 +190,6 @@ async function showHome() {
   $('livePill').hidden = true;
   $('title').textContent = '个人工作台';
   $('subtitle').textContent = me.displayName + (me.title ? ' · ' + me.title : '');
-  $('hello').textContent = '你好，' + callerName();
   document.title = 'Caller · 教师端';
   await loadHome();
 }
@@ -224,7 +222,7 @@ async function loadHome({ quiet = false } = {}) {
   }
   const hs = $('homeSchedules');
   hs.innerHTML = '';
-  if (!d.upcomingSchedules.length && !d.pausedSchedules.length) hs.append(emptyState('暂无定时提醒', '进入班级后可在「定时提醒」里创建每天固定时间的点人。'));
+  if (!d.upcomingSchedules.length && !d.pausedSchedules.length) hs.append(emptyState('暂无定时提醒'));
   for (const s of d.pausedSchedules) hs.append(miniSchedule(s, true));
   for (const s of d.upcomingSchedules) hs.append(miniSchedule(s, false));
 }
@@ -235,21 +233,18 @@ function renderHomeClasses(d) {
   const unowned = d.availableClasses.filter((c) => !mine.has(c.id));
   const requestable = unowned.filter((c) => !pending.has(c.id));
   $('requestPanel').hidden = me.role === 'admin' || !unowned.length;
-  $('homeIntro').textContent = $('requestPanel').hidden
-    ? '进入班级开始点人。'
-    : '进入班级开始点人。想管理新的班级，先提交申请，管理员批准后立即生效。';
 
   const box = $('myClasses');
   box.innerHTML = '';
   if (!d.classes.length) {
     if (me.role === 'admin') {
-      box.append(emptyState('还没有任何班级', '请先在管理端新增班级并录入名单。', { label: '打开管理端', fn: () => { location.href = '/admin'; } }));
+      box.append(emptyState('还没有任何班级', '', { label: '打开管理端', fn: () => { location.href = '/admin'; } }));
     } else if (!unowned.length) {
-      box.append(emptyState('还没有任何班级', '请等待管理员新增班级，之后可在这里申请管理。'));
+      box.append(emptyState('还没有任何班级', '请联系管理员新增班级。'));
     } else if (!requestable.length) {
-      box.append(emptyState('还没有获批的班级', '班级申请正在等待管理员审批，可在下方查看或撤回。'));
+      box.append(emptyState('还没有获批的班级', '申请待审批。'));
     } else {
-      box.append(emptyState('还没有获批的班级', '在下方选择班级提交申请，管理员批准后这里会出现「进入班级」。', { label: '去申请', fn: () => $('requestClass').focus() }));
+      box.append(emptyState('还没有获批的班级', '', { label: '去申请', fn: () => $('requestClass').focus() }));
     }
   }
   for (const c of d.classes) {
@@ -258,7 +253,7 @@ function renderHomeClasses(d) {
     stamp.dataset.color = c.color || '';
     const copy = el('div', 'body');
     copy.append(el('strong', '', c.name));
-    copy.append(el('small', '', `${c.studentCount} 名学生 · 大屏${c.autoClearSeconds ? ' ' + c.autoClearSeconds + ' 秒后自动清除' : '常驻显示'}`));
+    copy.append(el('small', '', `${c.studentCount} 名学生`));
     const acts = el('div', 'acts');
     const open = el('button', 'btn btn-primary', '');
     open.type = 'button';
@@ -376,7 +371,7 @@ function windowSummary() {
   if (callWindow.open) {
     n.append(el('span', '', `现在可以点人：${callWindow.current.start}–${callWindow.current.end}${callWindow.current.label ? '（' + callWindow.current.label + '）' : ''}`));
   } else {
-    n.append(el('span', '', '当前正在上课，暂不能点人' + (callWindow.next ? '。下次可用时间：' + nextText(callWindow.next) : '')));
+    n.append(el('span', '', callWindow.next ? '下次可点人：' + nextText(callWindow.next) : '暂无可点人时段'));
   }
   box.append(n);
   return box;
@@ -388,13 +383,8 @@ function renderWindowPill() {
   pill.className = 'status ' + (callWindow.open ? 'ok' : 'warn');
   $('windowText').textContent = callWindow.open
     ? `可点人至 ${callWindow.current.end}`
-    : (callWindow.next ? `上课中 · ${callWindow.next.date === callWindow.now.date ? '' : callWindow.next.weekdayName + ' '}${callWindow.next.start} 可点` : '上课中');
-  const notice = $('windowNotice');
-  if (callWindow.open) { notice.hidden = true; } else {
-    notice.hidden = false;
-    notice.innerHTML = '';
-    notice.append(icon('clock'), el('span', '', '当前正在上课，暂不能点人' + (callWindow.next ? `。下次可用时间：${nextText(callWindow.next)}` : '') + '。可以先选好学生，到时间再发送。'));
-  }
+    : (callWindow.next ? `下次 ${callWindow.next.date === callWindow.now.date ? '' : callWindow.next.weekdayName + ' '}${callWindow.next.start} 可点人` : '暂无可点人时段');
+  renderAnnouncementTiming();
   renderPicked();
 }
 
@@ -417,6 +407,7 @@ async function openClass(id) {
   $('actType').value = ''; $('actDate').value = '';
   $('actAuthor').innerHTML = '<option value="">全部教师</option>';
   $('sendErr').hidden = true;
+  clearScheduleError();
   klass = { classId: d.classId, className: d.className, code: d.code, color: d.color };
   students = d.students || [];
   maxNamesPerCall = d.maxNamesPerCall || 20;
@@ -438,14 +429,11 @@ async function openClass(id) {
   stamp.dataset.color = klass.color || '';
   $('livePill').hidden = false;
   $('title').textContent = klass.className;
-  $('subtitle').textContent = students.length + ' 名同学' + (d.autoClearSeconds ? ' · 大屏 ' + d.autoClearSeconds + ' 秒后自动清除' : ' · 大屏常驻显示');
+  $('subtitle').textContent = students.length + ' 名同学';
   document.title = klass.className + ' · Caller';
   $('nowTitle').textContent = klass.className + '大屏';
-  $('callerLabel').textContent = '大屏上显示的发起人：' + callerLabel();
+  $('callerLabel').textContent = '发起人：' + callerLabel();
   $('annUrgentField').hidden = me.role !== 'admin';
-  const policy = settings.announcementPolicy === 'next_window' && me.role !== 'admin';
-  $('annPolicyNote').hidden = !policy;
-  $('annPolicyNote').textContent = policy ? '学校设置：上课期间发布的留言会等到下一个课间再显示。' : '';
   $('pvClass').textContent = klass.className;
   renderWindowPill();
   renderGrid(); renderPicked(); renderNow(); renderLive(d);
@@ -526,8 +514,8 @@ function renderGrid() {
   empty.hidden = list.length > 0;
   if (!list.length) {
     fill(empty, students.length
-      ? emptyState('没有找到「' + q + '」', '换个关键词，或清空搜索框查看全班。', { label: '清空搜索', fn: () => { $('search').value = ''; callDraftRevision++; renderGrid(); $('search').focus(); } }, true)
-      : emptyState('本班名单还是空的', '请联系管理员在管理端录入学生名单。', null, true));
+      ? emptyState('没有找到「' + q + '」', '', { label: '清空搜索', fn: () => { $('search').value = ''; callDraftRevision++; renderGrid(); $('search').focus(); } }, true)
+      : emptyState('本班名单还是空的', '请联系管理员录入名单。', null, true));
   }
   const t = '已选择 ' + sel.size + ' / ' + maxNamesPerCall;
   $('hint').textContent = q ? '匹配 ' + list.length + ' 人 · ' + t : t;
@@ -559,7 +547,7 @@ function renderPicked() {
   $('sheetTitle').textContent = '已选 ' + n + ' 人';
   const txt = $('sendText');
   txt.innerHTML = '';
-  if (!open) txt.textContent = '上课中，暂不能点人';
+  if (!open) txt.textContent = '暂不能点人';
   else if (!n) txt.textContent = '通知到大屏';
   else { txt.append('通知 ' + n + ' 人'); txt.append(el('span', 'send-target', '到' + (klass ? klass.className : '') + '大屏')); }
   if (!n) closeSheet();
@@ -722,10 +710,6 @@ function renderSignal() {
     const head = el('div', 'signal-head');
     head.append(el('strong', '', sel.size ? '已选 ' + sel.size + ' 人，还没有发送' : '还没有发送通知'));
     box.append(head, signalTrack(sel.size ? 0 : -1, 'gold'));
-    const foot = el('div', 'signal-foot');
-    foot.append(el('p', 'muted', '发送后，这里实时显示通知走到了哪一步，以及每位同学有没有点「收到」。'));
-    foot.firstChild.style.margin = '0';
-    box.append(foot);
     syncTrayHeight();
     return;
   }
@@ -747,7 +731,7 @@ function renderSignal() {
   if (s.message) foot.append(el('p', 'muted', '附加说明：' + s.message));
   if (!displaysOnline && !st.ended && st.stage < 4) {
     const warn = el('div', 'note bad');
-    warn.append(icon('monitorOff'), el('span', '', '大屏未连接：学生暂时看不到这条通知。请检查教室大屏是否开机联网。'));
+    warn.append(icon('monitorOff'), el('span', '', '大屏离线，请检查教室电脑的网络。'));
     foot.append(warn);
   }
   const acts = el('div', 'row');
@@ -774,7 +758,7 @@ function renderSignal() {
   const dots = el('span', 'dots');
   for (let i = 0; i < 5; i += 1) dots.append(el('i', i <= st.stage ? 'on' : ''));
   tray.append(dots, el('span', '', st.short), el('span', '', s.names.length > 3 ? s.names.slice(0, 3).join('、') + '…' : s.names.join('、')));
-  tray.setAttribute('aria-label', '通知进度：' + st.text + '，点一下查看详情');
+  tray.setAttribute('aria-label', '查看通知进度：' + st.text);
   syncTrayHeight();
 }
 $('traySignal').onclick = () => { closeSheet(); $('signalPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
@@ -919,7 +903,7 @@ function renderPreview() {
   $('annPreview').classList.toggle('urgent', urgent);
   $('pvKind').textContent = urgent ? '紧急通知' : '班级留言';
   $('pvTitle').textContent = $('annTitle').value.trim() || '班级通知';
-  $('pvBody').textContent = $('annBody').value.trim() || '正文内容会显示在这里';
+  $('pvBody').textContent = $('annBody').value.trim() || '正文';
   $('pvFullTitle').textContent = $('annTitle').value.trim();
   $('pvFullBody').textContent = $('annBody').value.trim() || '尚未填写正文';
   $('pvAuthor').textContent = '—— ' + callerLabel();
@@ -928,7 +912,16 @@ function renderPreview() {
 $('annTitle').oninput = renderPreview;
 $('annBody').oninput = renderPreview;
 $('annUrgent').onchange = renderPreview;
-$('annWhen').onchange = () => { $('annAtField').hidden = $('annWhen').value !== 'later'; };
+function renderAnnouncementTiming() {
+  const deferred = me && me.role !== 'admin' && settings.announcementPolicy === 'next_window' && callWindow && !callWindow.open;
+  $('annWhen').querySelector('[value=now]').textContent = deferred
+    ? (callWindow.next ? nextText(callWindow.next) + ' 显示' : '点人时段显示') : '立即显示';
+}
+$('annWhen').onchange = () => {
+  const later = $('annWhen').value === 'later';
+  $('annAtField').hidden = !later;
+  $('annAt').required = later;
+};
 $('announceForm').onsubmit = async (e) => {
   e.preventDefault();
   const context = workspaceVersion;
@@ -946,13 +939,13 @@ $('announceForm').onsubmit = async (e) => {
   }
   if (urgent) {
     const cur = ownEvent(display.current);
+    const scheduled = body.publishAt > Date.now();
     const ok = await confirmDialog({
-      title: '发布紧急广播', danger: true, confirm: '立即抢占大屏',
-      text: '紧急广播会立刻占用' + klass.className + '大屏。',
+      title: '发布紧急广播', danger: true, confirm: scheduled ? '安排广播' : '立即抢占大屏',
+      text: klass.className + ' · ' + body.title,
       impact: [
-        cur ? '正在显示的「' + (cur.type === 'call' ? cur.names.join('、') : cur.title) + '」会被挤到等待队列，广播结束后回来' : '大屏当前空闲',
-        '大屏顶部显示红色信号条和「紧急通知」',
-        '操作会写入审计记录',
+        scheduled ? dateTime(body.publishAt) + ' 发布' : (cur ? '「' + (cur.type === 'call' ? cur.names.join('、') : cur.title) + '」将暂停显示，广播结束后恢复' : '大屏当前空闲'),
+        body.durationSeconds ? body.durationSeconds / 60 + ' 分钟后下屏' : '手动撤回',
       ],
     });
     if (!ok || context !== workspaceVersion) return;
@@ -978,7 +971,7 @@ async function loadAnnouncements() {
   if (!res.ok) return fill(box, errorState(errText(res, '留言加载失败'), loadAnnouncements));
   if (res.json.classId !== classId) return;
   box.innerHTML = '';
-  if (!res.json.notices.length) box.append(emptyState('还没有留言', '发布后会列在这里，可以随时撤回或再次发送。'));
+  if (!res.json.notices.length) box.append(emptyState('还没有留言'));
   for (const n of res.json.notices.slice(0, 20)) box.append(noticeRow(n));
 }
 
@@ -1016,7 +1009,7 @@ function noticeRow(n) {
 /* ---------- 定时提醒 ---------- */
 function renderSchPicker() {
   const refresh = () => renderSchPicker();
-  chips($('schPicked'), schSel, '还没有选择学生：在下面搜索或点选', refresh);
+  chips($('schPicked'), schSel, '未选择学生', refresh);
   $('schCount').textContent = '已选 ' + schSel.size + ' 人';
   const q = $('schSearch').value.trim();
   const grid = $('schGrid');
@@ -1061,7 +1054,7 @@ async function loadSchedules() {
   box.innerHTML = '';
   const paused = schedules.filter((s) => s.status === 'paused').length;
   $('scheduleBadge').textContent = paused ? String(paused) : '';
-  if (!schedules.length) box.append(emptyState('还没有定时提醒', '比如每天第二节课后提醒课代表去办公室，只需设置一次。'));
+  if (!schedules.length) box.append(emptyState('还没有定时提醒'));
   for (const s of schedules) {
     const row = el('div', 'item');
     const isPaused = s.status === 'paused';
@@ -1071,7 +1064,7 @@ async function loadSchedules() {
     const t = el('strong');
     t.append(el('span', 'num', s.time + '　'), s.names.join('、'));
     copy.append(t);
-    const meta = [s.weekdayNames.join('、'), s.message || '无附加说明', '创建：' + s.createdByName];
+    const meta = [s.weekdayNames.join('、'), s.message, '创建：' + s.createdByName].filter(Boolean);
     if (s.startDate || s.endDate) meta.push((s.startDate || '') + ' 至 ' + (s.endDate || '不限'));
     if (!s.enabled) meta.push('已停用');
     else if (isPaused) meta.push('已暂停：' + (PAUSE_REASONS[s.pauseReason] || s.pauseReason));
@@ -1104,7 +1097,7 @@ async function loadSchedules() {
       edit.onclick = async () => {
         const v = await promptDialog({
           title: '修改提醒时间', icon: 'clock', label: '新的提醒时间', type: 'time', value: s.time, required: true,
-          hint: '必须在允许点人的时段内：' + w.windows.map((x) => x.start + '–' + x.end).join('、'),
+          validate: (time) => w.windows.some((x) => time >= x.start && time < x.end) ? '' : '请选择可点人时段：' + w.windows.map((x) => x.start + '–' + x.end).join('、'),
         });
         if (!v || v === s.time || context !== workspaceVersion) return;
         const r = await api('PATCH', cpath('schedules/' + s.id), { time: v.trim() });
@@ -1118,7 +1111,7 @@ async function loadSchedules() {
       del.onclick = async () => {
         const ok = await confirmDialog({
           title: '删除这条定时提醒？', danger: true, confirm: '删除提醒',
-          impact: ['每天 ' + s.time + ' 不再自动点 ' + s.names.join('、'), '已经发出的记录会保留', '删除后不能恢复；只想临时停一下，可以用「暂停」'],
+          impact: [s.weekdayNames.join('、') + ' ' + s.time + ' · ' + s.names.join('、'), '删除后不能恢复'],
         });
         if (!ok || context !== workspaceVersion) return;
         const r = await api('DELETE', cpath('schedules/' + s.id));
@@ -1134,13 +1127,29 @@ async function loadSchedules() {
   }
 }
 
+function scheduleError(text, fieldId) {
+  $('schError').textContent = text;
+  $('schError').hidden = false;
+  const field = fieldId && $(fieldId);
+  if (field) { field.setAttribute('aria-describedby', 'schError'); field.setAttribute('aria-invalid', 'true'); field.focus(); }
+  else $('schError').focus();
+}
+function clearScheduleError() {
+  $('schError').hidden = true;
+  for (const id of ['schSearch', 'schTime']) {
+    $(id).removeAttribute('aria-invalid');
+    $(id).removeAttribute('aria-describedby');
+  }
+}
+for (const id of ['schSearch', 'schTime']) $(id).addEventListener('input', clearScheduleError);
 $('scheduleForm').onsubmit = async (e) => {
   e.preventDefault();
   const context = workspaceVersion;
+  clearScheduleError();
   const names = [...schSel];
-  if (!names.length) { $('schSearch').focus(); return toast('请先选择要提醒的学生', true); }
+  if (!names.length) return scheduleError('请选择要提醒的学生', 'schSearch');
   const weekdays = [...$('schWeekdays').querySelectorAll('input:checked')].map((i) => Number(i.value));
-  if (!weekdays.length) return toast('请至少选择一个执行星期', true);
+  if (!weekdays.length) return scheduleError('请选择执行星期');
   const body = {
     names, time: $('schTime').value, message: $('schMessage').value.trim(), weekdays,
     startDate: $('schStart').value || null, endDate: $('schEnd').value || null,
@@ -1149,8 +1158,8 @@ $('scheduleForm').onsubmit = async (e) => {
   const res = await api('POST', cpath('schedules'), body);
   if (context !== workspaceVersion) return;
   setBusy($('schCreate'), false);
-  if (!res.ok) return toast(errText(res, '创建失败'), true);
-  toast('已创建：每天 ' + body.time + ' 提醒 ' + names.join('、'));
+  if (!res.ok) return scheduleError(errText(res, '创建失败'), res.json && res.json.error === 'SCHEDULE_OUT_OF_WINDOW' ? 'schTime' : null);
+  toast('已创建：' + body.time + ' 提醒 ' + names.join('、'));
   $('schMessage').value = '';
   schSel.clear(); renderSchPicker();
   loadSchedules();
@@ -1182,8 +1191,8 @@ async function loadActivity() {
   const filtering = $('actType').value || $('actAuthor').value || $('actDate').value;
   if (!res.json.activity.length) {
     box.append(filtering
-      ? emptyState('没有符合条件的记录', '换个筛选条件试试。', { label: '重置筛选', fn: () => $('actReset').click() })
-      : emptyState('还没有记录', '点人、留言和定时提醒的执行情况都会记在这里。'));
+      ? emptyState('没有符合条件的记录', '', { label: '重置筛选', fn: () => $('actReset').click() })
+      : emptyState('还没有记录'));
     return;
   }
   for (const x of res.json.activity) {

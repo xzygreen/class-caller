@@ -1,4 +1,4 @@
-name: Build and release display.exe
+name: Build and release Windows programs
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag, for example v2.1.6 (never creates or overwrites a release)"
+        description: "Existing release tag, for example v2.1.7 (never creates tags or overwrites releases)"
         required: true
         type: string
 
@@ -60,7 +60,7 @@ jobs:
       - name: Install C and x86 MinGW toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install --yes gcc gcc-mingw-w64-i686 binutils-mingw-w64-i686 file zip
+          sudo apt-get install --yes gcc gcc-mingw-w64-i686 binutils-mingw-w64-i686 file zip unzip
 
       - name: Build display.exe and win7-launcher.exe from this source
         run: |
@@ -76,33 +76,44 @@ jobs:
         shell: bash
         run: |
           mkdir dist
-          asset="ClassCallerDisplay-${RELEASE_TAG}-win7-x86.exe"
-          bundle="ClassCallerDisplay-${RELEASE_TAG}-win7-x86"
-          cp windows-display/build/display.exe "dist/$asset"
-          mkdir "dist/$bundle"
-          cp windows-display/build/display.exe "dist/$bundle/display.exe"
-          cp windows-display/display.ini.example "dist/$bundle/display.ini"
-          cp windows-display/start-display.cmd "dist/$bundle/start-display.cmd"
-          cp windows-display/install-autostart.cmd "dist/$bundle/install-autostart.cmd"
-          cp windows-display/uninstall-autostart.cmd "dist/$bundle/uninstall-autostart.cmd"
-          cp docs/windows-display.md "dist/$bundle/README.md"
-          cp LICENSE NOTICE.md PRIVACY.md "dist/$bundle/"
-          (
-            cd dist
-            zip -9 -r "$bundle.zip" "$bundle"
-          )
-          # Verify the distributed privacy policy, not just the source document.
-          unzip -p "dist/$bundle.zip" "$bundle/PRIVACY.md" | cmp PRIVACY.md -
-          rm -rf "dist/$bundle"
-          file "dist/$asset"
-          i686-w64-mingw32-objdump -f "dist/$asset" | grep -E 'file format|architecture'
+          display_bundle="ClassCallerDisplay-${RELEASE_TAG}-win7-x86"
+          launcher_bundle="ClassCallerLauncher-${RELEASE_TAG}-win7-x86"
+          cp windows-display/build/display.exe "dist/$display_bundle.exe"
+          cp windows-launcher/build/win7-launcher.exe "dist/$launcher_bundle.exe"
+          mkdir "dist/$display_bundle" "dist/$launcher_bundle"
+          # Explicit allowlists only: never copy active INI, logs, state or user data.
+          # Keep .example names so extracting an update cannot overwrite a real INI.
+          cp windows-display/build/display.exe "dist/$display_bundle/display.exe"
+          cp windows-display/display.ini.example "dist/$display_bundle/display.ini.example"
+          cp windows-display/start-display.cmd "dist/$display_bundle/start-display.cmd"
+          cp windows-display/install-autostart.cmd "dist/$display_bundle/install-autostart.cmd"
+          cp windows-display/uninstall-autostart.cmd "dist/$display_bundle/uninstall-autostart.cmd"
+          cp docs/windows-display.md "dist/$display_bundle/README.md"
+          cp windows-launcher/build/win7-launcher.exe "dist/$launcher_bundle/win7-launcher.exe"
+          cp windows-launcher/win7-launcher.ini.example "dist/$launcher_bundle/win7-launcher.ini.example"
+          cp windows-launcher/start-native-watcher.cmd "dist/$launcher_bundle/start-native-watcher.cmd"
+          cp windows-launcher/register-protocol.cmd "dist/$launcher_bundle/register-protocol.cmd"
+          cp windows-launcher/unregister-protocol.cmd "dist/$launcher_bundle/unregister-protocol.cmd"
+          cp docs/windows-launcher.md "dist/$launcher_bundle/README.md"
+          for bundle in "$display_bundle" "$launcher_bundle"; do
+            cp LICENSE NOTICE.md PRIVACY.md "dist/$bundle/"
+            (
+              cd dist
+              zip -9 -r "$bundle.zip" "$bundle"
+            )
+            # Verify the distributed privacy policy, not just the source document.
+            unzip -p "dist/$bundle.zip" "$bundle/PRIVACY.md" | cmp PRIVACY.md -
+            rm -rf "dist/$bundle"
+            file "dist/$bundle.exe"
+            i686-w64-mingw32-objdump -f "dist/$bundle.exe" | grep -E 'file format|architecture'
+          done
           node "$RUNNER_TEMP/verify-release.js" manifest "$RELEASE_TAG" dist
           node "$RUNNER_TEMP/verify-release.js" verify "$RELEASE_TAG" dist
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ClassCallerDisplay-${{ env.RELEASE_TAG }}-win7-x86
+          name: ClassCallerWindows-${{ env.RELEASE_TAG }}-win7-x86
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -113,16 +124,30 @@ jobs:
         shell: bash
         run: |
           cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
-          ## 使用前必须配置
+          ## 更新内容
 
-          解压 ZIP 后，请先打开 `display.ini`，填写实际部署信息：
+          - 网页直接显示当前部署版本，移除重复标题、无关说明和常驻规则文案。
+          - 包含账号/授权、并发写入与班级事件校验修复，补充原生程序及浏览器回归测试。
+          - 同时发布大屏与可选启动器的 EXE/ZIP，附更新后的隐私说明、源码提交及 SHA-256 校验文件。
 
-          - `server=`：真实的服务网址，例如 `https://你的域名`
-          - `class_id=`：这台大屏对应的班级 ID
+          ## 选择下载
 
-          公开发布包不会包含真实服务网址、班级配置、学生名单或密码。配置完成后再运行 `display.exe` 或 `start-display.cmd`。
+          - **完整大屏（推荐）**：`ClassCallerDisplay-*-win7-x86.zip`，内含 `display.exe`、配置示例、自启脚本及说明。
+          - **已有校内程序的启动器（可选）**：`ClassCallerLauncher-*-win7-x86.zip`，内含 `win7-launcher.exe`、配置示例、协议注册/卸载与原生监听脚本及说明；不是完整大屏，不要与原生大屏同时运行。
+          - 两者均另附版本化单文件 EXE，供已有配置的设备更新。
 
-          `release-manifest.json` 记录源码标签、提交、工具链及文件 SHA-256；下载后请先核对校验文件。该版本资产不可覆盖，修复请发布新标签。
+          ## 更新与首次安装
+
+          **更新**：先退出旧程序，将下载的版本化 EXE 重命名为 `display.exe` 或 `win7-launcher.exe` 后替换对应文件。**保留原有 `display.ini`、`win7-launcher.ini` 和启动器状态文件**，不要用示例配置覆盖。
+
+          **首次安装**：解压对应 ZIP 到持久磁盘，按包内 `README.md` 配置：
+
+          - 大屏：复制 `display.ini.example` 为 `display.ini`，填写实际 `server=` 和本教室 `class_id=`，再运行 `start-display.cmd`。
+          - 启动器：复制 `win7-launcher.ini.example` 为 `win7-launcher.ini`，填写固定目标程序、工作目录及持久状态路径；按说明选择协议模式（`register-protocol.cmd`）或原生监听（`start-native-watcher.cmd`，必须传入实际服务端/本班 SSE 地址）。
+
+          公开包只含示例配置，不含真实 INI、日志、名单或用户数据。Windows 7 仍需 TLS/根证书更新和实机验收；交叉编译检查不等于实机验证。
+
+          下载后请核对 `.sha256`；`release-manifest.json` 记录标签、提交、工具链与四个产物的 SHA-256。已发布资产不可覆盖，修复使用新标签。
           EOF
           # Re-check HEAD/tag and every checksum immediately before publication.
           # Existing releases (including partial/draft releases) are refused.
