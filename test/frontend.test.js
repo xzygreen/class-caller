@@ -155,10 +155,24 @@ test('三端只显示任务相关信息与版本，不在操作页重复项目�
   for (const html of [teacherHtml, adminHtml]) {
     const [gate, app] = html.split('<div id="app" hidden>');
     assert.ok(gate.includes('data-app-version'), '登录闸门内有版本位置');
-    assert.ok(app.includes('data-app-version'), '登录后品牌旁有版本位置');
+    assert.ok(app.includes('data-app-version'), '登录后页脚有版本位置');
   }
   assert.ok(displayHtml.includes('class="display-brand"'), '大屏绑定错误时也能看到品牌与版本');
   assert.ok(read('teacher.css').includes('#tab-call { padding-bottom: calc(var(--tray-h, 80px) + 24px); }'));
+});
+
+test('教师端和管理端的版本仅位于页脚，并安全链接到 GitHub 仓库', () => {
+  for (const html of [teacherHtml, adminHtml]) {
+    const footers = [...html.matchAll(/<footer class="version-footer">([\s\S]*?)<\/footer>/g)];
+    assert.equal(footers.length, 2, '登录闸门和主界面各有一个版本页脚');
+    for (const [, footer] of footers) {
+      assert.match(footer, /<a class="app-version" data-app-version hidden/);
+      assert.ok(footer.includes('href="https://github.com/xzygreen/class-caller"'));
+      assert.ok(footer.includes('target="_blank" rel="noopener noreferrer"'));
+      assert.ok(footer.includes('新标签页打开'));
+    }
+    assert.ok(!html.replace(/<footer class="version-footer">[\s\S]*?<\/footer>/g, '').includes('data-app-version'), '顶部品牌和表单不再显示版本');
+  }
 });
 
 test('三端使用短地址及版本化的本地图标', () => {

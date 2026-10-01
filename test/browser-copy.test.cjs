@@ -25,6 +25,42 @@ async function badge(page, selector) {
   assert.ok(bounds.width > 0 && bounds.height > 0 && bounds.right <= bounds.viewport + 1, JSON.stringify(bounds));
   assert.ok(bounds.size >= 12, JSON.stringify(bounds));
 }
+async function footerBadge(page, scope = '#app') {
+  const selector = scope + ' > .version-footer [data-app-version]';
+  await badge(page, selector);
+  await page.waitFor(`(() => {
+    const tray = document.getElementById('tray'), footer = document.querySelector(${JSON.stringify(scope)} + ' > .version-footer');
+    const expected = ${JSON.stringify(scope)} === '#app' && tray && !tray.hidden ? tray.offsetHeight : 0;
+    return Math.abs(parseFloat(getComputedStyle(footer).marginBottom) - expected) < 1;
+  })()`);
+  const state = await page.evaluate(`(() => {
+    const container = document.querySelector(${JSON.stringify(scope)});
+    if (${JSON.stringify(scope)} === '#gate') container.scrollTop = container.scrollHeight;
+    else window.scrollTo(0, document.documentElement.scrollHeight);
+    const n = document.querySelector(${JSON.stringify(selector)}), r = n.getBoundingClientRect();
+    const tray = document.getElementById('tray'), limit = tray && !tray.hidden ? tray.getBoundingClientRect().top : innerHeight;
+    const gate = document.getElementById('gate');
+    return { tag: n.tagName, href: n.href, target: n.target, rel: n.rel, title: n.title,
+      count: [...document.querySelectorAll('[data-app-version]')].filter(el => el.getClientRects().length).length,
+      inBrand: document.querySelectorAll('.brand [data-app-version]').length,
+      width: r.width, height: r.height, top: r.top, bottom: r.bottom, right: r.right, viewport: innerWidth, limit,
+      hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === n,
+      overflow: Math.max(document.documentElement.scrollWidth - innerWidth, gate && !gate.hidden ? gate.scrollWidth - gate.clientWidth : 0)
+    };
+  })()`);
+  assert.deepEqual({ tag: state.tag, href: state.href, target: state.target, rel: state.rel }, {
+    tag: 'A', href: 'https://github.com/xzygreen/class-caller', target: '_blank', rel: 'noopener noreferrer',
+  });
+  assert.match(state.title, /GitHub.*新标签页打开/);
+  assert.equal(state.count, 1, 'only one visible version');
+  assert.equal(state.inBrand, 0, 'no version in the top brand');
+  assert.ok(state.width >= 44 && state.height >= 44 && state.hit, JSON.stringify(state));
+  assert.ok(state.right > state.viewport - 60 && state.right <= state.viewport, JSON.stringify(state));
+  assert.ok(state.top >= 0 && state.bottom <= state.limit && state.bottom > state.limit - 60, JSON.stringify(state));
+  assert.ok(state.overflow <= 1, JSON.stringify(state));
+  await axName(page, 'link', '部署版本 ' + version);
+  await page.evaluate('window.scrollTo(0, 0); document.getElementById("gate").scrollTop = 0');
+}
 async function axName(page, role, name) {
   assert.ok((await page.ax()).some(n => n.role?.value === role && n.name?.value === name), role + ': ' + name);
 }
@@ -43,13 +79,13 @@ test('Task-only copy preserves controls, data, errors and full preview accessibi
       const page = await browser.page({ width: 390, height: 844 });
       await page.goto(s.base + '/teacher');
       await page.waitFor('!document.getElementById("gate").hidden');
-      await badge(page, '#loginForm [data-app-version]');
+      await footerBadge(page, '#gate');
       await noFiller(page);
       await axName(page, 'textbox', '登录名');
       await submit(page, '#loginForm');
       assert.equal(await page.evaluate('document.getElementById("loginErr").textContent'), '请输入登录名和密码');
       await click(page, '#toRegister');
-      await badge(page, '#registerForm [data-app-version]');
+      await footerBadge(page, '#gate');
       await noFiller(page);
       await setValue(page, '#regUser', 'bad name');
       assert.equal(await page.evaluate('document.getElementById("regUser").validity.patternMismatch'), true);
@@ -57,7 +93,7 @@ test('Task-only copy preserves controls, data, errors and full preview accessibi
       assert.equal(await page.evaluate('document.getElementById("regUser").validity.valid'), true);
       assert.deepEqual(await page.evaluate('({required: regPwd.required, min: regPwd.minLength, max: regPwd.maxLength, nameMax: regName.maxLength})'), { required: true, min: 8, max: 128, nameMax: 20 });
       await page.evaluate('showPasswordGate()');
-      await badge(page, '#passwordForm [data-app-version]');
+      await footerBadge(page, '#gate');
       await noFiller(page);
       assert.equal(await page.evaluate('document.getElementById("newPwd2").required'), true);
       await page.evaluate('showGate("loginForm")');
@@ -73,18 +109,50 @@ test('Task-only copy preserves controls, data, errors and full preview accessibi
       const adminGate = await browser.page({ width: 390, height: 844 });
       await adminGate.goto(s.base + '/admin');
       await adminGate.waitFor('!document.getElementById("gate").hidden');
-      await badge(adminGate, '#loginForm [data-app-version]');
+      await footerBadge(adminGate, '#gate');
       await noFiller(adminGate);
       await axName(adminGate, 'link', '教师端');
       assert.equal(await adminGate.evaluate('document.getElementById("loginPwd").required'), true);
       await adminGate.close();
     });
 
+    await t.test('version footers stay at the bottom right without covering the call tray at desktop and narrow widths', async () => {
+      for (const [width, height] of [[1366, 768], [390, 844], [320, 568]]) {
+        const page = await browser.page({ cookie: teacher.cookie, base: s.base, width, height });
+        await page.goto(s.base + '/teacher');
+        await page.waitFor('document.querySelector("#myClasses .item")');
+        await footerBadge(page);
+        await click(page, '#myClasses .btn-primary');
+        await page.waitFor('classId === "class-a" && document.querySelector("#grid button")');
+        await footerBadge(page);
+        await click(page, '#grid button');
+        await footerBadge(page);
+        await page.evaluate('(() => { const grid = document.getElementById("grid"); for (let i = 0; i < 100; i++) grid.append(grid.firstElementChild.cloneNode(true)); })()');
+        await footerBadge(page);
+        await page.evaluate('showHome()');
+        await footerBadge(page);
+        await page.evaluate('openClass("class-a")');
+        await footerBadge(page);
+        await click(page, '#tabbtn-announce');
+        await page.waitFor('!document.getElementById("tab-announce").hidden && document.getElementById("tray").hidden');
+        await footerBadge(page);
+        await page.close();
+
+        const gate = await browser.page({ width, height });
+        await gate.goto(s.base + '/teacher');
+        await gate.waitFor('!document.getElementById("gate").hidden');
+        await footerBadge(gate, '#gate');
+        await click(gate, '#toRegister');
+        await footerBadge(gate, '#gate');
+        await gate.close();
+      }
+    });
+
     await t.test('home and call show current data; closed windows disable sending without repeated warning prose', async () => {
       const page = await browser.page({ cookie: teacher.cookie, base: s.base, width: 390, height: 844 });
       await page.goto(s.base + '/teacher');
       await page.waitFor('document.querySelector("#myClasses .item")');
-      await badge(page, '#app .top [data-app-version]');
+      await footerBadge(page);
       await noFiller(page);
       assert.match(await page.evaluate('document.getElementById("myClasses").innerText'), /甲班[\s\S]*3 名学生[\s\S]*进入班级/);
       assert.equal(await page.evaluate('document.getElementById("homeIntro")'), null);
@@ -187,9 +255,9 @@ test('Task-only copy preserves controls, data, errors and full preview accessibi
       const page = await browser.page({ cookie: admin.cookie, base: s.base });
       await page.goto(s.base + '/admin');
       await page.waitFor('!document.getElementById("app").hidden && ovData');
-      await badge(page, '#app .top [data-app-version]');
+      await footerBadge(page);
       await page.resize(390, 844);
-      await badge(page, '#app .top [data-app-version]');
+      await footerBadge(page);
       await page.resize(1366, 768);
       const ready = {
         overview: 'document.querySelector("#ovDisplays .dossier")',
@@ -294,7 +362,7 @@ test('uninitialized admin offers recovery without setup commands', { skip: missi
     const page = await browser.page();
     await page.goto(s.base + '/admin');
     await page.waitFor('!document.getElementById("setupPanel").hidden');
-    await badge(page, '#setupPanel [data-app-version]');
+    await footerBadge(page, '#gate');
     await noFiller(page);
     assert.equal(await page.evaluate('document.querySelectorAll("#setupPanel pre, #setupPanel code").length'), 0);
     await axName(page, 'link', '重新检查');

@@ -7,6 +7,8 @@
 
 /* 点人页：名单与侧栏末尾为固定托盘留白 */
 #tab-call { padding-bottom: calc(var(--tray-h, 80px) + 24px); }
+#tray:not([hidden]) ~ .version-footer { margin-bottom: var(--tray-h, 80px); }
+#tray:not([hidden]) ~ .version-footer a { scroll-margin-bottom: calc(var(--tray-h, 80px) + var(--gap-tight)); }
 #tab-call .main { min-width: 0; }
 #gridEmpty .empty-state { padding: var(--gap-block) 0; }
 

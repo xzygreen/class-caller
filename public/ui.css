@@ -31,7 +31,7 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 /* ---------- 登录闸门 ---------- */
 .gate {
   position: fixed; inset: 0; z-index: 60;
-  display: flex; flex-direction: column; align-items: center; padding: 24px; overflow: auto;
+  display: flex; flex-direction: column; align-items: center; padding: 24px 24px 0; overflow: auto;
   background:
     linear-gradient(180deg, var(--ink-800) 0 180px, transparent 180px),
     var(--paper-050);
@@ -65,6 +65,13 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
 .brand-role { font-size: 14px; font-weight: 600; color: var(--text-muted); }
 .app-version { font-size: 12px; font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.version-footer {
+  display: flex; justify-content: flex-end; flex: none; width: 100%; margin-top: auto;
+  padding: 0 max(var(--gap-group), env(safe-area-inset-right)) max(var(--gap-tight), env(safe-area-inset-bottom));
+}
+.version-footer a { display: inline-flex; align-items: center; justify-content: center; min-width: var(--hit); min-height: var(--hit); padding: 0 var(--gap-tight); border-radius: var(--r-xs); color: var(--text-muted); }
+.version-footer a:hover, .version-footer a:focus-visible { color: var(--signal); }
+.gate > .version-footer { margin-top: 0; padding-right: 0; padding-top: var(--gap-item); }
 
 /* ---------- 表单控件 ---------- */
 input[type="text"], input[type="password"], input[type="time"], input[type="date"], input[type="number"],

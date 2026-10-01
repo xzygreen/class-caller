@@ -5,18 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <title>Caller · 管理端</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.7">
-<link rel="stylesheet" href="ui.css?v=2.1.7">
-<link rel="stylesheet" href="admin.css?v=2.1.7">
-<link rel="icon" href="/favicon.ico?v=2.1.7" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.7" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.7">
+<link rel="stylesheet" href="tokens.css?v=2.1.8">
+<link rel="stylesheet" href="ui.css?v=2.1.8">
+<link rel="stylesheet" href="admin.css?v=2.1.8">
+<link rel="icon" href="/favicon.ico?v=2.1.8" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.1.8" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.8">
 </head>
 <body>
 
 <div id="gate" class="gate" hidden>
   <form id="loginForm">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">管理端</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
     <h1>管理员登录</h1>
     <label for="loginUser">登录名</label>
     <input type="text" id="loginUser" autocomplete="username" required autocapitalize="off" spellcheck="false">
@@ -27,18 +27,19 @@
     <p class="switch"><a href="/teacher">教师端</a></p>
   </form>
   <div id="setupPanel" class="panel" hidden>
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">管理端</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></div>
     <h1>还没有管理员账号</h1>
     <p class="sub">请联系部署负责人创建管理员账号。</p>
     <a class="btn btn-secondary" href="/admin">重新检查</a>
   </div>
+  <footer class="version-footer"><a class="app-version" data-app-version hidden href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer" title="GitHub · xzygreen/class-caller（新标签页打开）"></a></footer>
 </div>
 
 <div id="app" hidden>
   <header class="top">
     <div class="top-in">
       <div class="ident">
-        <a class="brand" href="/admin"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="app-version" data-app-version hidden></span><span class="brand-role">管理端</span></a>
+        <a class="brand" href="/admin"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Caller</span><span class="brand-role">管理端</span></a>
       </div>
       <div class="states" id="schoolState" aria-label="全校状态">
         <span class="status" id="windowPill"><svg data-icon="clock"></svg><span id="windowText">作息</span></span>
@@ -229,11 +230,12 @@
       </section>
     </main>
   </div>
+  <footer class="version-footer"><a class="app-version" data-app-version hidden href="https://github.com/xzygreen/class-caller" target="_blank" rel="noopener noreferrer" title="GitHub · xzygreen/class-caller（新标签页打开）"></a></footer>
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="ui.js?v=2.1.7"></script>
-<script src="version.js?v=2.1.7"></script>
-<script src="admin.js?v=2.1.7"></script>
+<script src="ui.js?v=2.1.8"></script>
+<script src="version.js?v=2.1.8"></script>
+<script src="admin.js?v=2.1.8"></script>
 </body>
 </html>
