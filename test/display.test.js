@@ -29,7 +29,9 @@ test('大屏 exe 固定为 Windows 7 x86 GUI 程序，只用本班公开接口',
   assert.ok(source.includes('SW_RESTORE'));
   assert.ok(!source.includes('/api/teacher/') && !source.includes('/teacher/'), '大屏程序不得访问老师接口');
   assert.ok(!/\bsystem\s*\(/.test(source));
-  assert.ok(!source.includes('ShellExecute'));
+  assert.equal((source.match(/ShellExecuteW\(/g) || []).length, 1, '唯一外部打开操作是学生主动打开本班浏览器呼叫页');
+  assert.match(source, /L"%ls\/display\?class=%ls&callTeacher=1"/);
+  assert.match(source, /wparam == VK_F2/);
   assert.ok(!source.includes('CreateProcess'));
   assert.ok(!source.includes('等待老师点名'));
   assert.ok(!source.includes('等待点名'));

@@ -204,6 +204,7 @@ static int g_is_topmost = 0;
 static HANDLE g_log = INVALID_HANDLE_VALUE;
 static int g_ack_busy = 0;
 static RECT g_ack_rect;                        /* 「收到」按钮的命中区域（客户区坐标） */
+static RECT g_teacher_rect;                    /* 打开浏览器中的学生呼叫入口 */
 static RECT g_name_rects[CC_MAX_NAMES];        /* 每个姓名的命中区域 */
 static int g_name_rect_count = 0;
 static WCHAR g_ack_note[96] = L"";
@@ -1606,6 +1607,7 @@ static void paint_rail(HDC dc, int w, int h, int *rail_bottom)
     title_font = make_font(title_px, FW_BOLD);
     meta_font = make_font(meta_px, FW_SEMIBOLD);
     row_h = title_px * 14 / 10;
+    if (row_h < 48) row_h = 48;
     y_center = pad_top + row_h / 2;
 
     /* 左：金色标记 + 班级名 + 班级编号（编号永远和名称一起出现，颜色只是辅助） */
@@ -1636,6 +1638,20 @@ static void paint_rail(HDC dc, int w, int h, int *rail_bottom)
     fill_circle(dc, x, y_center, (w * 3 / 1000) > 4 ? w * 3 / 1000 : 4, g_connected ? C_LIVE : C_ALERT);
     x -= w * 14 / 1000 + 6;
     draw_text_at(dc, meta_font, C_ON_BODY, x, y_center - meta_px * 6 / 10, clock_text, TA_RIGHT);
+
+    memset(&g_teacher_rect, 0, sizeof(g_teacher_rect));
+    if (!g_bind_error && !g_preview && g_class_code[0] != L'\0') {
+        SIZE label = measure(dc, meta_font, L"呼叫老师 (F2)");
+        SIZE time_size = measure(dc, meta_font, clock_text);
+        int button_h = label.cy + 20;
+        if (button_h < 44) button_h = 44;
+        g_teacher_rect.right = x - time_size.cx - 20;
+        g_teacher_rect.left = g_teacher_rect.right - label.cx - 24;
+        g_teacher_rect.top = y_center - button_h / 2;
+        g_teacher_rect.bottom = g_teacher_rect.top + button_h;
+        fill_rect(dc, g_teacher_rect.left, g_teacher_rect.top, g_teacher_rect.right, g_teacher_rect.bottom, C_INK_700);
+        draw_text_at(dc, meta_font, C_GOLD, g_teacher_rect.left + 12, y_center - label.cy / 2, L"呼叫老师 (F2)", TA_LEFT);
+    }
 
     *rail_bottom = pad_top + row_h + pad_bottom;
     fill_rect(dc, 0, *rail_bottom, w, *rail_bottom + 1, C_INK_600);
@@ -2163,6 +2179,21 @@ static void paint(HWND hwnd)
 
 /* ================= 窗口过程 ================= */
 
+static void open_teacher_call(void)
+{
+    WCHAR url[CC_MAX_URL + 128];
+    HINSTANCE result;
+    if (g_bind_error || g_preview || g_class_code[0] == L'\0') return;
+    if (FAILED(StringCchPrintfW(url, sizeof(url) / sizeof(url[0]), L"%ls/display?class=%ls&callTeacher=1", g_config.server, g_config.class_id))) return;
+    result = ShellExecuteW(g_hwnd, L"open", url, NULL, NULL, SW_SHOWNORMAL);
+    if ((INT_PTR)result <= 32) {
+        MessageBoxW(g_hwnd, L"无法打开浏览器。请设置支持现代网页的默认浏览器后重试。", L"呼叫老师", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    /* 专用大屏通常置顶；最小化后学生才能操作浏览器，后续通知仍照常恢复窗口。 */
+    ShowWindow(g_hwnd, SW_MINIMIZE);
+}
+
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
@@ -2258,6 +2289,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         int i;
         pt.x = (short)LOWORD(lparam);
         pt.y = (short)HIWORD(lparam);
+        if (PtInRect(&g_teacher_rect, pt)) { open_teacher_call(); return 0; }
         if (!g_current.is_call) return 0;
         if (PtInRect(&g_ack_rect, pt)) { send_ack(-1); return 0; }
         for (i = 0; i < g_name_rect_count; ++i) {
@@ -2286,11 +2318,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
 
     case WM_MOUSEMOVE: {
         POINT pt;
-        int over = 0, i;
+        int over, i;
         pt.x = (short)LOWORD(lparam);
         pt.y = (short)HIWORD(lparam);
+        over = PtInRect(&g_teacher_rect, pt);
         if (g_current.is_call) {
-            over = PtInRect(&g_ack_rect, pt);
+            over = over || PtInRect(&g_ack_rect, pt);
             for (i = 0; !over && i < g_name_rect_count; ++i) over = PtInRect(&g_name_rects[i], pt);
         }
         if (g_config.hide_cursor) {
@@ -2302,7 +2335,9 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
     }
 
     case WM_KEYDOWN:
-        if (wparam == VK_ESCAPE) {
+        if (wparam == VK_F2) {
+            open_teacher_call();
+        } else if (wparam == VK_ESCAPE) {
             ShowWindow(hwnd, SW_MINIMIZE);           /* 不退出：下一次通知会自动恢复 */
         } else if (wparam == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             DestroyWindow(hwnd);

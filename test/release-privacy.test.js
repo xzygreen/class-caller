@@ -73,6 +73,22 @@ test('cleanup plan excludes other classes, future/live notices, recent resends a
   assert.throws(() => planCleanup(db, { ...options('/synthetic/db.json'), classId: 'typo' }, NOW), /does not exist/);
 });
 
+test('student call cleanup is explicit and retains live, recent and other-class receipts', () => {
+  const db = seed();
+  db.studentCalls = [
+    { id: 'old', classId: 'class-a', createdAt: OLD, expiresAt: OLD + 1800000, status: 'pending' },
+    { id: 'recent', classId: 'class-a', createdAt: RECENT, expiresAt: RECENT + 1800000, status: 'replied', repliedAt: RECENT },
+    { id: 'live', classId: 'class-a', createdAt: OLD, expiresAt: NOW + 1800000, status: 'pending' },
+    { id: 'other', classId: 'class-b', createdAt: OLD, expiresAt: OLD + 1800000, status: 'cancelled' },
+  ];
+  const plan = planCleanup(db, { ...options('/synthetic/db.json'), collections: ['studentCalls'] }, NOW);
+  assert.deepEqual(plan.counts, { studentCalls: 1 });
+  assert.deepEqual(plan.replacements.studentCalls.map((c) => c.id), ['recent', 'live', 'other']);
+  assert.equal(planCleanup(db, options('/synthetic/db.json'), NOW).replacements.studentCalls, undefined);
+  const legacy = seed(); delete legacy.studentCalls;
+  assert.doesNotThrow(() => planCleanup(legacy, options('/synthetic/db.json'), NOW));
+});
+
 test('F09: users, sessions, notices and audit persist after close/reopen; dry-run changes no database or backups', async (t) => {
   const { file, dir } = fixture(t);
   let store = new JsonStore(file);

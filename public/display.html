@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Caller 大屏</title>
-<link rel="stylesheet" href="tokens.css?v=2.1.8">
-<link rel="icon" href="/favicon.ico?v=2.1.8" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
-<link rel="icon" href="/favicon.svg?v=2.1.8" type="image/svg+xml" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.1.8">
+<link rel="stylesheet" href="tokens.css?v=2.2.0">
+<link rel="stylesheet" href="student-calls.css?v=2.2.0">
+<link rel="icon" href="/favicon.ico?v=2.2.0" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
+<link rel="icon" href="/favicon.svg?v=2.2.0" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2.2.0">
 <style>
   /* 版面单位：取宽、高中更紧的一边（16:9 时 1u = 1vw）。
      1366×768、1080p、4K 等比缩放；超宽屏按高度收住，4:3 按宽度收住。 */
@@ -342,6 +343,7 @@
     <span id="klassCode"></span>
   </div>
   <div class="rail-r">
+    <button class="ctl" id="btnCallTeacher" type="button" hidden>呼叫老师</button>
     <span id="railClock" class="tnum">--:--</span>
     <span class="conn" id="conn" role="status"><i aria-hidden="true"></i><em>连接中</em></span>
     <button class="ctl" id="btnSound" type="button" aria-pressed="true">
@@ -416,7 +418,26 @@
 <div class="toast" id="reconnect">正在重新连接…</div>
 <div class="toast" id="launchWarning" role="alert">本地程序未启动，请联系管理员检查启动器后重新发送。</div>
 
-<script src="version.js?v=2.1.8"></script>
-<script src="display.js?v=2.1.8"></script>
+<dialog id="studentCallDialog" class="student-dialog" aria-labelledby="studentCallTitle">
+  <div class="student-head"><h2 id="studentCallTitle">呼叫老师</h2><button id="studentCallClose" type="button">关闭</button></div>
+  <p id="studentCallWindow" role="status"></p>
+  <form id="studentCallForm">
+    <fieldset id="studentCallFields" style="border:0;padding:0;margin:0;min-width:0">
+      <label><span>你的姓名</span><input id="studentCallName" required maxlength="20" autocomplete="off" placeholder="请输入本班名单中的姓名"></label>
+      <label><span>找哪位老师</span><select id="studentCallTeacher" required><option value="">请选择老师</option></select></label>
+      <label><span>事由或地点（可选，最多 60 字）</span><input id="studentCallMessage" maxlength="60" autocomplete="off" placeholder="例如：请到教室，有一道题想请教"></label>
+      <div class="student-actions"><button id="studentCallRefresh" type="button">刷新</button><button id="studentCallSend" class="student-send" type="submit" disabled>呼叫老师</button></div>
+    </fieldset>
+  </form>
+  <p id="studentCallError" class="student-error" role="alert"></p>
+  <h3>本设备的呼叫</h3>
+  <p id="studentCallSync" role="status">每 5 秒自动更新；记录仅供本设备查看。</p>
+  <p id="studentCallEmpty">本设备暂没有呼叫记录。</p>
+  <div id="studentCallReceipts" aria-live="polite" tabindex="-1"></div>
+</dialog>
+
+<script src="version.js?v=2.2.0"></script>
+<script src="display.js?v=2.2.0"></script>
+<script src="display-student-calls.js?v=2.2.0"></script>
 </body>
 </html>

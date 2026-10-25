@@ -1,0 +1,40 @@
+/* 学生呼叫沿用大屏的墨色与金色，输入区需近距离触控。 */
+#btnCallTeacher { color: var(--gold); white-space: nowrap; }
+#btnCallTeacher[hidden] { display: none; }
+.student-dialog {
+  color-scheme: dark; color: var(--on-ink-strong); background: var(--ink-800);
+  border: 1px solid var(--ink-500); border-radius: var(--r-lg);
+  width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 32px);
+  padding: 28px; cursor: default; overflow: auto; font: 18px/1.6 var(--font-sans);
+  scrollbar-color: var(--ink-500) var(--ink-800);
+}
+.student-dialog::backdrop { background: rgba(8, 11, 20, .8); }
+.student-dialog h2 { font-size: 28px; margin: 0; }
+.student-dialog h3 { font-size: 21px; margin: 28px 0 12px; }
+.student-dialog p { margin: 8px 0 20px; color: var(--on-ink-body); }
+.student-dialog label { display: block; margin: 16px 0; }
+.student-dialog label span { display: block; margin-bottom: 6px; }
+.student-dialog input, .student-dialog select {
+  display: block; width: 100%; min-height: 48px; padding: 10px 12px;
+  font: inherit; color: var(--on-ink-strong); background: var(--ink-900);
+  border: 1px solid var(--ink-500); border-radius: var(--r-sm); caret-color: var(--gold);
+}
+.student-dialog input::placeholder { color: var(--on-ink-muted); }
+.student-dialog button {
+  min-height: 48px; padding: 10px 18px; border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid var(--ink-500); background: var(--ink-700); color: var(--on-ink-strong); font: inherit;
+}
+.student-dialog button:hover { background: var(--ink-600); }
+.student-dialog button:disabled { opacity: .55; cursor: default; }
+.student-dialog .student-send { background: var(--gold); color: var(--ink-900); border-color: var(--gold); font-weight: 700; }
+.student-dialog .student-send:hover { background: var(--on-ink-strong); }
+.student-dialog .student-head, .student-dialog .student-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.student-dialog .student-error { color: var(--alert-on-ink); }
+.student-dialog .student-receipt { padding: 16px 0; border-top: 1px solid var(--ink-500); overflow-wrap: anywhere; }
+.student-dialog .student-receipt p { margin: 6px 0; }
+.student-dialog .student-reply { color: var(--ok-on-ink); white-space: pre-wrap; }
+#studentCallReceipts { display: flex; flex-direction: column; }
+@media (max-width: 600px) {
+  .student-dialog { padding: 20px; font-size: 16px; }
+  .student-dialog h2 { font-size: 24px; }
+}

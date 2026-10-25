@@ -78,6 +78,7 @@ function errText(res, fallback) {
 
 /* ================= 登录闸门 ================= */
 function showGate(which, message) {
+  if (typeof window.resetStudentInbox === 'function') window.resetStudentInbox();
   $('app').hidden = true;
   $('gate').hidden = false;
   for (const id of ['loginForm', 'registerForm', 'passwordForm']) $(id).hidden = id !== which;
@@ -156,6 +157,7 @@ async function enter(user) {
   if (me.mustChangePassword) return showPasswordGate();
   $('gate').hidden = true;
   $('app').hidden = false;
+  if (typeof window.startStudentInbox === 'function') window.startStudentInbox();
   $('avatar').textContent = initial(me.displayName);
   $('whoName').textContent = me.displayName;
   const head = $('whoami');

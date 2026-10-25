@@ -2,6 +2,8 @@
 
 老师在手机或电脑上点几下，教室大屏立刻显示「某某老师正在找：张三、李四」，学生在大屏上点一下「收到」，老师那边马上看到。也能发班级留言、设每天固定时间的提醒。
 
+学生也可以在大屏点「呼叫老师」，输入本班姓名、选择老师并发送事由。老师在教师端的「学生呼叫」里回应，学生回到原设备即可查看回复。
+
 一台服务器可以同时服务全校所有班级，每个班一块大屏。管理员统一管理班级、名单和作息，老师用自己的账号登录，只能操作被授权的班级。
 
 - 服务端：纯 Node.js，**不需要安装任何 npm 依赖**
@@ -38,7 +40,7 @@
 | --- | --- | --- |
 | **管理员** | 账号密码，进入 `/admin` | 建班级、维护名单、设全校作息、审批老师申请、管理老师账号、看所有记录 |
 | **老师** | 自己注册的账号密码，进入 `/teacher` | 申请管理某个班；获批后点人、发留言、设定时提醒、看本班记录 |
-| **大屏** | 不用登录，打开 `/display?class=班级标识` | 显示当前通知；学生点「收到」 |
+| **大屏** | 不用登录，打开 `/display?class=班级标识` | 显示当前通知；学生点「收到」，或输入本班姓名呼叫老师 |
 
 核心原则：**登录身份属于个人，班级权限由管理员授权**。没有任何共享的班级密码。
 
@@ -273,6 +275,12 @@ ls /var/lib/class-caller/backups          # 每日自动备份
 
 署名来自登录账号，不能自选身份。
 
+### 接收学生呼叫
+
+教师端顶部的「学生呼叫」在个人工作台和所有班级页面都可使用，汇总发给你的呼叫，每 5 秒更新。待回应条数会突出显示；打开后可看到班级、学生姓名和事由，填写回复并点「发送回应」。只有被呼叫的教师能查看、回复；同班其他老师和管理员不能代回。
+
+请保持教师端页面打开并登录。页面关闭或设备休眠时不会推送系统通知；重新打开后会读取仍有效的呼叫。回复不受课间限制。30 分钟未回应的呼叫自动变为已超时，不会无限挂起。
+
 ---
 
 ## 6. 教室大屏
@@ -291,6 +299,18 @@ https://你的域名/display?class=班级标识
 - 断线自动重连，重连后恢复当前内容；服务器暂时不可达时会显示原因并自动重试。
 - 建议浏览器设为开机自启并打开这个地址。
 
+### 学生从大屏呼叫老师
+
+1. 点顶栏「呼叫老师」，输入与本班名单一致的姓名。
+2. 选择本班已获授权且账号启用的教师，按需填写事由或地点（最多 60 字），点「呼叫老师」。
+3. 在「本设备的呼叫」查看等待、回应、撤回或超时状态；仍待回应的呼叫可以撤回。
+
+发起呼叫遵守全校课间作息；每名学生每分钟最多一次，同一学生对同一老师同时最多一条待回应呼叫。每班每分钟最多 10 条、同时最多 20 条待回应；同一来源 IP 每分钟最多 30 次提交尝试、20 条成功呼叫。重复网络重试不会重复创建记录。
+
+大屏不提供完整学生名单。输入姓名是公共设备上的自报身份，不等同于学生账号认证；能访问大屏的人可以发起呼叫，请按学校场景限制设备和网络访问。页面只公开本班教师姓名、职务及随机标识，不提供教师账号或联系方式。
+
+浏览器只在本地保存最多 10 个随机回执编号，优先保留待回应记录；用这些编号查询原设备发起的呼叫，刷新可恢复，清除网站数据则无法在该设备找回。其他设备不会自动出现这些记录；同一设备的不同使用者可查看它们。服务端每班保留最近最多 200 条呼叫记录，包含事由与回复；重启不清除。老师被停用、撤销授权或班级/学生不可用时，相关待回应呼叫显示不可用。紧急事项请直接联系老师，不依赖页面回应。
+
 ### 方案二：Windows 原生程序 `display.exe`
 
 适合 Windows 7/10 的教室电脑，需要自动前置、全屏、提示音。
@@ -299,6 +319,7 @@ https://你的域名/display?class=班级标识
 - 首次安装：将同目录的 `display.ini.example` 复制为 `display.ini`，填写实际 `server=https://你的域名` 和 `class_id=班级标识` 后再运行。
 - 更新：先退出旧程序，只替换 `display.exe`，**保留原有 `display.ini`**，不要用示例覆盖；单独下载的版本化 EXE 需先重命名为 `display.exe`。
 - 32 位程序，只依赖系统自带的 `msvcrt.dll`。Windows 7 需要 TLS 1.2 支持和较新的根证书。
+- 更新后的原生程序顶栏提供「呼叫老师 (F2)」：点击或按 F2 会用默认浏览器打开本班呼叫页，并最小化原生窗口。这个新增交互需要支持现代网页的浏览器；原有通知、提示音与确认仍由原生程序完成。
 
 详细步骤和故障对照表见 [Windows 原生大屏部署](docs/windows-display.md)。
 
@@ -433,6 +454,8 @@ https://你的域名/display?class=班级标识
 | 管理员 | `GET /api/admin/overview`、`GET /api/admin/requests`、`POST /api/admin/requests/:id/{approve,reject}`、`GET/POST /api/admin/users`、`PATCH/DELETE /api/admin/users/:id`、`POST /api/admin/memberships`、`POST /api/admin/memberships/revoke`、`GET/POST /api/admin/classes`、`PATCH /api/admin/classes/:id`、`PUT /api/admin/classes/:id/students`、`GET/PUT /api/admin/call-windows`、`GET /api/admin/schedules`、`PATCH/DELETE /api/admin/schedules/:id`、`POST /api/admin/classes/:id/display/clear`、`GET /api/admin/audit`、`GET/PATCH /api/admin/settings`、`POST /api/admin/sessions/revoke-all` |
 
 旧接口 `/api/classes/:id/teacher/*` 与 `/api/teacher/*` 返回 `410`。
+
+反向呼叫接口：`GET /api/classes/:id/public/student-call-options` 获取本班教师与作息；`POST /api/classes/:id/public/student-calls` 发起（`studentName`、`teacherId`、可选 `message`、UUID v4 `requestId` 重试键）；`POST .../public/student-calls/status` 凭最多 10 个 `ids` 查询回执；`POST .../public/student-calls/:callId/cancel` 撤回。回执编号具有查询/撤回能力，不要公开转发。教师使用已登录的 `GET /api/me/student-calls` 和 `POST /api/me/student-calls/:callId/reply`（`reply` 最多 60 字）。公开接口不提供全班呼叫列表。
 
 ### 数据存储
 

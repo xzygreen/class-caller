@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag, for example v2.1.7 (never creates tags or overwrites releases)"
+        description: "Existing release tag, for example v2.2.0 (never creates tags or overwrites releases)"
         required: true
         type: string
 
@@ -126,9 +126,10 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
           ## 更新内容
 
-          - 网页直接显示当前部署版本，移除重复标题、无关说明和常驻规则文案。
-          - 包含账号/授权、并发写入与班级事件校验修复，补充原生程序及浏览器回归测试。
-          - 同时发布大屏与可选启动器的 EXE/ZIP，附更新后的隐私说明、源码提交及 SHA-256 校验文件。
+          - 学生可从大屏「呼叫老师」输入本班姓名、选择老师；教师端新增跨班收件箱，回复返回发起呼叫的设备。
+          - 支持撤回、30 分钟超时、刷新恢复、重复提交去重、课间限制和限频；仅目标教师可查看及回复。
+          - Windows 大屏新增「呼叫老师 (F2)」，打开本班网页并最小化原生窗口。此交互需要支持现代网页的默认浏览器；原有通知、响铃和确认仍由原生程序完成。
+          - 更新隐私与升级说明，覆盖双向呼叫、权限、并发、持久化和桌面/手机浏览器回归；同时发布大屏和可选启动器的 EXE/ZIP、源码提交与 SHA-256 校验文件。
 
           ## 选择下载
 

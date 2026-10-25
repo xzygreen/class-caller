@@ -14,6 +14,7 @@ const PAUSE_REASONS = {
   STUDENT_REMOVED: '学生已移出名单', CLASS_UNAVAILABLE: '班级已归档',
 };
 const ACTIONS = {
+  'student_call.create': '学生呼叫老师', 'student_call.reply': '教师回应呼叫', 'student_call.cancel': '学生撤回呼叫',
   'user.register': '教师注册', 'user.create': '创建教师', 'user.create_admin': '创建管理员', 'user.update': '修改账号', 'user.delete': '删除账号',
   'user.password_change': '修改密码', 'user.bootstrap_admin': '初始化管理员', 'access.request': '申请班级', 'access.cancel': '撤回申请',
   'access.approve': '批准申请', 'access.reject': '拒绝申请', 'access.grant': '授权班级', 'access.revoke': '撤销权限',

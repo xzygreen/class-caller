@@ -8,12 +8,13 @@ const { randomUUID } = require('crypto');
 const { JsonStore } = require('../lib/store');
 const { CLASS_ID_RE, DB_VERSION } = require('../lib/constants');
 
-const COLLECTIONS = ['notices', 'auditLogs'];
+const COLLECTIONS = ['notices', 'auditLogs', 'studentCalls'];
 const CLASS_AUDIT_ACTIONS = new Set([
   'class.create', 'class.update', 'class.students',
   'access.request', 'access.cancel', 'access.approve', 'access.reject', 'access.grant', 'access.revoke',
   'notice.call', 'notice.announce', 'notice.urgent', 'notice.withdraw', 'notice.resend',
   'notice.publish_due', 'notice.auto_withdraw',
+  'student_call.create', 'student_call.reply', 'student_call.cancel',
   'display.clear', 'display.clear_all',
   'schedule.create', 'schedule.update', 'schedule.delete', 'schedule.auto_pause',
 ]);
@@ -44,7 +45,7 @@ function parseArgs(args, now = Date.now()) {
   }
   const collections = (values['--collections'] || 'notices').split(',');
   if (new Set(collections).size !== collections.length || collections.some((key) => !COLLECTIONS.includes(key))) {
-    throw new Error('--collections allows only notices,auditLogs; accounts, roster, sessions and schedules are never edited');
+    throw new Error('--collections allows only notices,auditLogs,studentCalls; accounts, roster, sessions and schedules are never edited');
   }
   const apply = values['--apply'] === true;
   if (apply && values['--confirm'] !== classId) throw new Error('--apply also requires --confirm with the exact class ID');
@@ -54,7 +55,7 @@ function parseArgs(args, now = Date.now()) {
 
 function planCleanup(db, options, now = Date.now()) {
   if (db.version !== DB_VERSION || !Array.isArray(db.classes)
-      || COLLECTIONS.some((key) => !Array.isArray(db[key]))) {
+      || ['notices', 'auditLogs', ...options.collections].some((key) => !Array.isArray(db[key]))) {
     throw new Error('Unsupported or malformed database; cleanup does not migrate or repair data');
   }
   if (!db.classes.some((item) => item.id === options.classId)) throw new Error('Class does not exist; no data changed');
@@ -63,6 +64,11 @@ function planCleanup(db, options, now = Date.now()) {
       // User/global audit entries may mention this class in free text: keep them.
       return CLASS_AUDIT_ACTIONS.has(item.action) && item.target === options.classId
         && Number.isFinite(item.at) && item.at < options.cutoff;
+    }
+    if (collection === 'studentCalls') {
+      if (item.classId !== options.classId || !Number.isFinite(item.expiresAt) || item.expiresAt > now) return false;
+      const times = [item.createdAt, item.expiresAt, item.repliedAt, item.cancelledAt].filter((value) => value != null);
+      return times.length > 0 && times.every((value) => Number.isFinite(value) && value < options.cutoff);
     }
     if (item.classId !== options.classId || !['published', 'withdrawn'].includes(item.status)) return false;
     // Preserve scheduled/paused notices and potentially live announcements.
@@ -108,7 +114,7 @@ async function cleanup(options, now = Date.now()) {
 
 if (require.main === module) {
   if (process.argv.slice(2).length === 1 && process.argv[2] === '--help') {
-    console.log('Stop every writer first. Default is dry-run.\nUsage: node scripts/privacy-cleanup.js --db /absolute/data/db.json --class class-a --before YYYY-MM-DD [--collections notices,auditLogs] [--apply --confirm class-a]\nOnly old class-scoped notices/audit records are eligible. The pre-clean snapshot is retained; normal automatic-backup rotation still applies. See PRIVACY.md.');
+    console.log('Stop every writer first. Default is dry-run.\nUsage: node scripts/privacy-cleanup.js --db /absolute/data/db.json --class class-a --before YYYY-MM-DD [--collections notices,auditLogs,studentCalls] [--apply --confirm class-a]\nOnly old class-scoped notices, student calls and audit records are eligible. The pre-clean snapshot is retained; normal automatic-backup rotation still applies. See PRIVACY.md.');
   } else {
     Promise.resolve().then(() => cleanup(parseArgs(process.argv.slice(2))))
       .then((summary) => console.log(JSON.stringify(summary, null, 2)))

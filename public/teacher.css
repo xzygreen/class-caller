@@ -52,3 +52,15 @@
 @media (min-width: 721px) {
   .tray #traySignal { display: none !important; }
 }
+/* 学生呼叫收件箱：入口在所有班级和个人工作台均可用。 */
+#studentInboxButton, #studentInboxRefresh { min-height: var(--hit); }
+#studentInboxButton.has-calls { background: var(--gold-wash); color: var(--gold-deep); border-color: var(--gold); }
+#studentInboxDialog { width: min(680px, calc(100vw - 24px)); }
+#studentInbox { display: flex; flex-direction: column; }
+.student-inbox-item { padding: 20px 0; border-bottom: 1px solid var(--paper-200); overflow-wrap: anywhere; }
+.student-inbox-item[data-pending="true"] { order: -1; }
+.student-inbox-item h3 { margin: 0 0 8px; font-size: 20px; }
+.student-inbox-item p { margin: 8px 0; white-space: pre-wrap; }
+.student-inbox-reply { color: var(--ok); }
+.student-inbox-form { margin-top: 16px; }
+.student-inbox-form[hidden] { display: none; }

@@ -15,6 +15,7 @@ function classPath(sub) {
 }
 
 function showBindError(title, detail, retrying = false) {
+  if (typeof window.disableStudentCalls === 'function') window.disableStudentCalls();
   render({ type: 'clear' }, false);
   document.body.classList.add('bind-error');
   document.body.classList.remove('active', 'notice', 'urgent');
@@ -620,6 +621,7 @@ async function loadRemoteConfig() {
   klass = { classId: config.classId, className: config.className, code: config.code, color: config.color };
   applyClassIdentity();
   launcherMode = config.launcher && config.launcher.mode || 'off';
+  if (typeof window.enableStudentCalls === 'function') window.enableStudentCalls();
   connect();
 }
 

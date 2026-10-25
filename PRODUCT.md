@@ -10,7 +10,7 @@ web
 
 - **Teachers** (primary). Individual accounts. They open the teacher page on a phone in a corridor or on an office computer, about equally often, find one or more students in a class roster and send "Caller is looking for you" to that class's classroom display. The job is minutes-long at most and usually happens during the short break between lessons.
 - **Administrators.** School IT or academic-affairs staff. They manage classes and rosters, the school-wide call windows (break times), teacher accounts and class authorization, scheduled reminders, the classroom displays, and the audit log.
-- **Students** (display only). They read the classroom display from across the room and tap "收到" to confirm they have seen it.
+- **Students** (shared display). They read the classroom display, tap "收到", or enter their roster name and call an authorized teacher. They check responses on the same device without a student account.
 
 ## Product Purpose
 
@@ -21,6 +21,8 @@ Success: the teacher finds and notifies a student in a few seconds and knows the
 ## Positioning
 
 The product's core is a tracked delivery: selected → sent → queued → on screen → acknowledged, with per-student confirmation. A generic digital-signage or messaging tool does not have this. Priority queueing (urgent > scheduled > manual call > announcement) and school-wide call windows are part of the product's rules.
+
+Reverse calls have a separate lifecycle: sent → waiting → teacher replied, cancelled, or expired after 30 minutes. The teacher inbox spans their classes and polls every five seconds while the page is open. Public displays expose authorized teacher names, never the complete roster; student names are self-reported and checked against that class. Device receipts are local and shared by that device's users.
 
 ## Operating Context
 
