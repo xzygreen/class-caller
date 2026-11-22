@@ -10,7 +10,8 @@
  *      也可以直接点某个名字只确认这一个人；确认状态随 SSE 广播同步到所有大屏与教师端；
  *   4. 按服务器下发的 expiresAt 显示倒计时进度条，到期自动回到待机；
  *   5. 待机显示时钟、日期与班级名称/编号，方便巡检设备绑定是否正确；
- *   6. 服务器上找不到该班级时显示醒目的「班级绑定错误」，不展示任何通知。
+ *   6. 服务器上找不到该班级时显示醒目的「班级绑定错误」，不展示任何通知；
+ *   7. 「呼叫老师」(F2)：程序内面板，同学点选本班老师、输入姓名与留言后发起呼叫，并查看老师回复或撤回，不打开浏览器。
  *
  * 无第三方运行时依赖，只用 user32/gdi32/msimg32/winhttp/advapi32，图标随资源嵌入。
  */
@@ -35,6 +36,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <winhttp.h>
+#include <wincrypt.h>
 #include <strsafe.h>
 #endif
 #include <stdlib.h>
@@ -69,6 +71,13 @@
 #define CC_CLASS_NAME_UNITS  64
 #define CC_CLASS_ID_UNITS    32      /* 服务端 CLASS_ID_RE：[a-z0-9][a-z0-9-]{0,31} */
 #define CC_CLASS_CODE_UNITS  4
+#define CC_UUID_UNITS        36
+#define CC_MAX_TEACHERS      24      /* 面板最多列出的本班老师 */
+#define CC_TEACHER_UNITS     40      /* 老师姓名（服务端上限 20 字，留出代理对余量） */
+#define CC_TEACHER_TITLE_UNITS 24    /* 职务（服务端上限 12 字） */
+#define CC_MAX_RECEIPTS      10      /* 与服务端 status 接口一次可查的回执数一致 */
+#define CC_REPLY_UNITS       60
+#define CC_ERROR_UNITS       120
 
 #define CC_WINDOW_CLASS  L"ClassCallerDisplayWindow"
 #define CC_MUTEX_NAME    L"Local\\ClassCallerDisplay-SingleInstance"
@@ -80,12 +89,18 @@
 #define WM_APP_CONN    (WM_APP + 2)   /* wParam = 1 已连接 / 0 断开；lParam = 断开原因（WinHTTP 错误码或 HTTP 状态） */
 #define WM_APP_CONFIG  (WM_APP + 3)   /* lParam = ClassInfo*（堆分配）；wParam = 0 正常 / 1 班级不存在 */
 #define WM_APP_SHOW    (WM_APP + 4)   /* 第二个实例请求：把已有窗口拉到前台 */
+#define WM_APP_CALL    (WM_APP + 6)   /* 学生呼叫请求结果：lParam = CallJob*（UI 线程释放） */
 #define WM_APP_ACK     (WM_APP + 5)   /* 「收到」请求结果：wParam = 1 成功 / 0 失败；lParam = AckJob*（UI 线程释放） */
 
 #define TIMER_CLOCK    1
 #define TIMER_PROGRESS 2
 #define TIMER_CURSOR   3
 #define TIMER_EXPIRE   4
+#define TIMER_SC_POLL  5              /* 学生呼叫：查询回执 */
+#define TIMER_SC_IDLE  6              /* 学生呼叫：无人操作自动收起 */
+
+#define IDC_SC_NAME    101
+#define IDC_SC_MESSAGE 102
 
 /* 颜色（对应 public/tokens.css 的墨色阶与强调色） */
 #define C_INK_900   RGB(0x08, 0x0B, 0x14)
@@ -153,6 +168,41 @@ typedef struct AckJob {
     DWORD error;                     /* 失败时的 WinHTTP 错误码或 HTTP 状态 */
 } AckJob;
 
+/* 学生呼叫老师：本班可呼叫的老师、呼叫回执 */
+enum { SC_PENDING = 0, SC_REPLIED, SC_CANCELLED, SC_EXPIRED, SC_UNAVAILABLE };
+
+typedef struct TeacherOption {
+    WCHAR id[CC_UUID_UNITS + 1];
+    WCHAR name[CC_TEACHER_UNITS + 1];
+    WCHAR title[CC_TEACHER_TITLE_UNITS + 1];
+} TeacherOption;
+
+typedef struct CallOptions {
+    WCHAR class_id[CC_CLASS_ID_UNITS + 1];
+    int teacher_count;
+    TeacherOption teachers[CC_MAX_TEACHERS];
+    int window_open;                 /* 作息允许现在呼叫 */
+} CallOptions;
+
+typedef struct StudentCall {
+    WCHAR id[CC_UUID_UNITS + 1];
+    WCHAR student[CC_MAX_NAME_UNITS + 1];
+    WCHAR teacher[CC_TEACHER_UNITS + 1];
+    WCHAR message[CC_MAX_MESSAGE_UNITS + 1];
+    WCHAR reply[CC_REPLY_UNITS + 1];
+    int status;
+    ULONGLONG created_at;
+    ULONGLONG settled_local;         /* 本机记录的结束时刻；0 = 仍在等待 */
+} StudentCall;
+
+typedef struct CallReply {
+    int ok;
+    WCHAR error[48];
+    WCHAR message[CC_ERROR_UNITS + 1];
+    int call_count;
+    StudentCall calls[CC_MAX_RECEIPTS];
+} CallReply;
+
 typedef struct JsonParser {
     const unsigned char *data;
     SIZE_T length;
@@ -204,7 +254,33 @@ static int g_is_topmost = 0;
 static HANDLE g_log = INVALID_HANDLE_VALUE;
 static int g_ack_busy = 0;
 static RECT g_ack_rect;                        /* 「收到」按钮的命中区域（客户区坐标） */
-static RECT g_teacher_rect;                    /* 打开浏览器中的学生呼叫入口 */
+static RECT g_teacher_rect;                    /* 顶栏「呼叫老师」按钮 */
+
+/* 学生呼叫老师面板（全部由 UI 线程读写） */
+static int g_sc_open = 0;
+static HWND g_sc_name_edit = NULL, g_sc_msg_edit = NULL, g_sc_last_edit = NULL;
+static WNDPROC g_sc_edit_base = NULL;
+static HFONT g_sc_edit_font = NULL;
+static int g_sc_edit_font_px = 0;
+static HBRUSH g_sc_edit_brush = NULL;
+static CallOptions g_sc_options;
+static int g_sc_options_state = 0;
+static int g_sc_options_busy = 0, g_sc_submit_busy = 0, g_sc_poll_busy = 0, g_sc_cancel_busy = 0;
+static LONG g_sc_version = 0;
+static WCHAR g_sc_teacher_id[CC_UUID_UNITS + 1] = L"";
+static WCHAR g_sc_request_id[CC_UUID_UNITS + 1] = L"";
+static WCHAR g_sc_request_key[CC_MAX_NAME_UNITS + CC_UUID_UNITS + CC_MAX_MESSAGE_UNITS + 8] = L"";
+static StudentCall g_sc_calls[CC_MAX_RECEIPTS];   /* 本机发出的呼叫回执，只在内存里，退出即清空 */
+static int g_sc_call_count = 0;
+static WCHAR g_sc_note[CC_ERROR_UNITS + 1] = L"";
+static int g_sc_note_error = 0;
+static WCHAR g_sc_flash_text[CC_TEACHER_UNITS + CC_MAX_NAME_UNITS + CC_REPLY_UNITS + 8] = L"";
+static ULONGLONG g_sc_flash_until = 0;
+static RECT g_sc_teacher_rects[CC_MAX_TEACHERS], g_sc_cancel_rects[CC_MAX_RECEIPTS];
+static int g_sc_teacher_count = 0, g_sc_cancel_count = 0, g_sc_cancel_index[CC_MAX_RECEIPTS];
+static RECT g_sc_send_rect, g_sc_osk_rect, g_sc_close_rect, g_sc_retry_rect, g_sc_name_box, g_sc_msg_box;
+
+static void sc_sync(void);
 static RECT g_name_rects[CC_MAX_NAMES];        /* 每个姓名的命中区域 */
 static int g_name_rect_count = 0;
 static WCHAR g_ack_note[96] = L"";
@@ -782,6 +858,311 @@ static int parse_public_config(const char *json, SIZE_T length, ClassInfo *info,
         }
         return 0;
     }
+}
+
+/* ================= 学生呼叫老师：响应解析与请求体（可移植，随契约测试编译） ================= */
+
+static int json_parse_bool(JsonParser *p, int *value)
+{
+    json_skip_space(p);
+    if (p->pos + 4 <= p->length && memcmp(p->data + p->pos, "true", 4) == 0) { p->pos += 4; *value = 1; return 1; }
+    if (p->pos + 5 <= p->length && memcmp(p->data + p->pos, "false", 5) == 0) { p->pos += 5; *value = 0; return 1; }
+    return 0;
+}
+
+static int uuid_valid(const WCHAR *id)
+{
+    SIZE_T i;
+    for (i = 0; i < CC_UUID_UNITS; ++i) {
+        WCHAR c = id[i];
+        if (i == 8 || i == 13 || i == 18 || i == 23) { if (c != L'-') return 0; }
+        else if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f') || (c >= L'A' && c <= L'F'))) return 0;
+    }
+    return id[CC_UUID_UNITS] == L'\0';
+}
+
+static int parse_teacher(JsonParser *p, TeacherOption *teacher)
+{
+    WCHAR key[64];
+
+    memset(teacher, 0, sizeof(*teacher));
+    if (!json_expect(p, '{')) return 0;
+    if (json_peek(p) == '}') return 0;
+    for (;;) {
+        if (!json_parse_string(p, key, 64, NULL) || !json_expect(p, ':')) return 0;
+        if (wcscmp(key, L"id") == 0) {
+            if (!json_parse_string(p, teacher->id, CC_UUID_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"displayName") == 0) {
+            if (!json_parse_string(p, teacher->name, CC_TEACHER_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"title") == 0) {
+            if (!json_parse_string(p, teacher->title, CC_TEACHER_TITLE_UNITS + 1, NULL)) return 0;
+        } else if (!json_skip_value(p)) {
+            return 0;
+        }
+        if (json_peek(p) == ',') { ++p->pos; continue; }
+        if (json_peek(p) == '}') { ++p->pos; break; }
+        return 0;
+    }
+    return uuid_valid(teacher->id) && teacher->name[0] != L'\0'
+        && !text_has_control(teacher->name) && !text_has_control(teacher->title);
+}
+
+/* GET public/student-call-options：{ ok, classId, teachers:[{id,displayName,title}], callWindow:{open,...} } */
+static int parse_call_options(const char *json, SIZE_T length, CallOptions *options)
+{
+    JsonParser p;
+    WCHAR key[64];
+    int ok = 0, seen_class = 0, seen_teachers = 0, seen_open = 0;
+
+    memset(&p, 0, sizeof(p));
+    p.data = (const unsigned char *)json;
+    p.length = length;
+    memset(options, 0, sizeof(*options));
+    if (!json_expect(&p, '{')) return 0;
+    if (json_peek(&p) == '}') return 0;
+    for (;;) {
+        if (!json_parse_string(&p, key, 64, NULL) || !json_expect(&p, ':')) return 0;
+        if (wcscmp(key, L"ok") == 0) {
+            if (!json_parse_bool(&p, &ok)) return 0;
+        } else if (wcscmp(key, L"classId") == 0) {
+            if (seen_class || !json_parse_string(&p, options->class_id, CC_CLASS_ID_UNITS + 1, NULL)) return 0;
+            seen_class = 1;
+        } else if (wcscmp(key, L"teachers") == 0) {
+            if (seen_teachers || !json_expect(&p, '[')) return 0;
+            seen_teachers = 1;
+            if (json_peek(&p) == ']') { ++p.pos; }
+            else for (;;) {
+                TeacherOption teacher;
+                if (!parse_teacher(&p, &teacher)) return 0;
+                /* 超出面板容量的老师不显示，但仍须是合法 JSON */
+                if (options->teacher_count < CC_MAX_TEACHERS) options->teachers[options->teacher_count++] = teacher;
+                if (json_peek(&p) == ',') { ++p.pos; continue; }
+                if (json_peek(&p) == ']') { ++p.pos; break; }
+                return 0;
+            }
+        } else if (wcscmp(key, L"callWindow") == 0) {
+            if (seen_open || !json_expect(&p, '{')) return 0;
+            if (json_peek(&p) == '}') return 0;
+            for (;;) {
+                if (!json_parse_string(&p, key, 64, NULL) || !json_expect(&p, ':')) return 0;
+                if (wcscmp(key, L"open") == 0) {
+                    if (seen_open || !json_parse_bool(&p, &options->window_open)) return 0;
+                    seen_open = 1;
+                } else if (!json_skip_value(&p)) {
+                    return 0;
+                }
+                if (json_peek(&p) == ',') { ++p.pos; continue; }
+                if (json_peek(&p) == '}') { ++p.pos; break; }
+                return 0;
+            }
+            if (!seen_open) return 0;
+        } else if (!json_skip_value(&p)) {
+            return 0;
+        }
+        if (json_peek(&p) == ',') { ++p.pos; continue; }
+        if (json_peek(&p) == '}') { ++p.pos; break; }
+        return 0;
+    }
+    json_skip_space(&p);
+    return p.pos == p.length && ok && seen_class && seen_teachers && seen_open && class_id_valid(options->class_id);
+}
+
+static int parse_student_call(JsonParser *p, StudentCall *call)
+{
+    WCHAR key[64];
+    WCHAR status[16];
+    int seen_status = 0;
+
+    memset(call, 0, sizeof(*call));
+    if (!json_expect(p, '{')) return 0;
+    if (json_peek(p) == '}') return 0;
+    for (;;) {
+        if (!json_parse_string(p, key, 64, NULL) || !json_expect(p, ':')) return 0;
+        if (wcscmp(key, L"id") == 0) {
+            if (!json_parse_string(p, call->id, CC_UUID_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"studentName") == 0) {
+            if (!json_parse_string(p, call->student, CC_MAX_NAME_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"teacherName") == 0) {
+            if (!json_parse_string(p, call->teacher, CC_TEACHER_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"message") == 0) {
+            if (!json_parse_string(p, call->message, CC_MAX_MESSAGE_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"reply") == 0) {
+            if (!json_parse_string(p, call->reply, CC_REPLY_UNITS + 1, NULL)) return 0;
+        } else if (wcscmp(key, L"status") == 0) {
+            if (seen_status || !json_parse_string(p, status, 16, NULL)) return 0;
+            seen_status = 1;
+        } else if (wcscmp(key, L"createdAt") == 0) {
+            if (!json_parse_uint64(p, &call->created_at)) return 0;
+        } else if (!json_skip_value(p)) {
+            return 0;
+        }
+        if (json_peek(p) == ',') { ++p->pos; continue; }
+        if (json_peek(p) == '}') { ++p->pos; break; }
+        return 0;
+    }
+    if (!seen_status || !uuid_valid(call->id) || call->student[0] == L'\0') return 0;
+    if (text_has_control(call->student) || text_has_control(call->teacher)
+        || text_has_control(call->message) || text_has_control_except_newline(call->reply)) return 0;
+    if (wcscmp(status, L"pending") == 0) call->status = SC_PENDING;
+    else if (wcscmp(status, L"replied") == 0) call->status = SC_REPLIED;
+    else if (wcscmp(status, L"cancelled") == 0) call->status = SC_CANCELLED;
+    else if (wcscmp(status, L"expired") == 0) call->status = SC_EXPIRED;
+    else if (wcscmp(status, L"unavailable") == 0) call->status = SC_UNAVAILABLE;
+    else return 0;
+    return 1;
+}
+
+/*
+ * 提交 / 查询 / 撤回的响应：{ ok:true, call:{...} }、{ ok:true, calls:[...] } 或 { ok:false, error, message }。
+ * 返回 1 = 响应格式可信（reply->ok 区分成功与服务端拒绝），0 = 不可信，调用方按网络失败处理。
+ */
+static int parse_call_reply(const char *json, SIZE_T length, CallReply *reply)
+{
+    JsonParser p;
+    WCHAR key[64];
+    int seen_ok = 0, seen_calls = 0;
+
+    memset(&p, 0, sizeof(p));
+    p.data = (const unsigned char *)json;
+    p.length = length;
+    memset(reply, 0, sizeof(*reply));
+    if (!json_expect(&p, '{')) return 0;
+    if (json_peek(&p) == '}') return 0;
+    for (;;) {
+        if (!json_parse_string(&p, key, 64, NULL) || !json_expect(&p, ':')) return 0;
+        if (wcscmp(key, L"ok") == 0) {
+            if (seen_ok || !json_parse_bool(&p, &reply->ok)) return 0;
+            seen_ok = 1;
+        } else if (wcscmp(key, L"error") == 0) {
+            if (!json_parse_string(&p, reply->error, 48, NULL)) return 0;
+        } else if (wcscmp(key, L"message") == 0) {
+            if (!json_parse_string(&p, reply->message, CC_ERROR_UNITS + 1, NULL)) return 0;
+            if (text_has_control(reply->message)) return 0;
+        } else if (wcscmp(key, L"call") == 0) {
+            if (seen_calls || !parse_student_call(&p, &reply->calls[0])) return 0;
+            seen_calls = 1;
+            reply->call_count = 1;
+        } else if (wcscmp(key, L"calls") == 0) {
+            if (seen_calls || !json_expect(&p, '[')) return 0;
+            seen_calls = 1;
+            if (json_peek(&p) == ']') { ++p.pos; }
+            else for (;;) {
+                if (reply->call_count >= CC_MAX_RECEIPTS) return 0;
+                if (!parse_student_call(&p, &reply->calls[reply->call_count])) return 0;
+                ++reply->call_count;
+                if (json_peek(&p) == ',') { ++p.pos; continue; }
+                if (json_peek(&p) == ']') { ++p.pos; break; }
+                return 0;
+            }
+        } else if (!json_skip_value(&p)) {
+            return 0;
+        }
+        if (json_peek(&p) == ',') { ++p.pos; continue; }
+        if (json_peek(&p) == '}') { ++p.pos; break; }
+        return 0;
+    }
+    json_skip_space(&p);
+    if (p.pos != p.length || !seen_ok) return 0;
+    if (reply->ok) return seen_calls;
+    return reply->error[0] != L'\0';
+}
+
+/* 把 UTF-16 文本写成带引号的 JSON 字符串（UTF-8）。控制字符与落单的代理项一律拒绝。 */
+static int json_append_text(char *out, SIZE_T capacity, SIZE_T *used, const WCHAR *text)
+{
+    SIZE_T i, n = *used;
+
+    if (n + 2 >= capacity) return 0;
+    out[n++] = '"';
+    for (i = 0; text[i] != L'\0'; ++i) {
+        DWORD c = (DWORD)text[i];
+        if (c < 0x20 || c == 0x7f) return 0;
+        if (c >= 0xd800 && c <= 0xdbff) {
+            DWORD low = (DWORD)text[i + 1];
+            if (low < 0xdc00 || low > 0xdfff) return 0;
+            c = 0x10000 + ((c - 0xd800) << 10) + (low - 0xdc00);
+            ++i;
+        } else if (c >= 0xdc00 && c <= 0xdfff) {
+            return 0;
+        }
+        if (n + 8 >= capacity) return 0;
+        if (c == '"' || c == '\\') { out[n++] = '\\'; out[n++] = (char)c; }
+        else if (c < 0x80) out[n++] = (char)c;
+        else if (c < 0x800) { out[n++] = (char)(0xc0 | (c >> 6)); out[n++] = (char)(0x80 | (c & 0x3f)); }
+        else if (c < 0x10000) {
+            out[n++] = (char)(0xe0 | (c >> 12)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3f)); out[n++] = (char)(0x80 | (c & 0x3f));
+        } else if (c <= 0x10ffff) {
+            out[n++] = (char)(0xf0 | (c >> 18)); out[n++] = (char)(0x80 | ((c >> 12) & 0x3f));
+            out[n++] = (char)(0x80 | ((c >> 6) & 0x3f)); out[n++] = (char)(0x80 | (c & 0x3f));
+        } else return 0;
+    }
+    out[n++] = '"';
+    out[n] = '\0';
+    *used = n;
+    return 1;
+}
+
+static int json_append_raw(char *out, SIZE_T capacity, SIZE_T *used, const char *text)
+{
+    SIZE_T length = strlen(text);
+    if (*used + length + 1 > capacity) return 0;
+    memcpy(out + *used, text, length + 1);
+    *used += length;
+    return 1;
+}
+
+/* POST public/student-calls 的请求体 */
+static int build_call_body(char *out, SIZE_T capacity, SIZE_T *used, const WCHAR *student,
+    const WCHAR *teacher_id, const WCHAR *message, const WCHAR *request_id)
+{
+    *used = 0;
+    if (!uuid_valid(teacher_id) || !uuid_valid(request_id) || student[0] == L'\0') return 0;
+    return json_append_raw(out, capacity, used, "{\"studentName\":") && json_append_text(out, capacity, used, student)
+        && json_append_raw(out, capacity, used, ",\"teacherId\":") && json_append_text(out, capacity, used, teacher_id)
+        && json_append_raw(out, capacity, used, ",\"message\":") && json_append_text(out, capacity, used, message)
+        && json_append_raw(out, capacity, used, ",\"requestId\":") && json_append_text(out, capacity, used, request_id)
+        && json_append_raw(out, capacity, used, "}");
+}
+
+/* 待回应优先，其余按创建时间倒序；与网页端回执列表一致 */
+static void sort_calls(StudentCall *calls, int count)
+{
+    int i, j;
+    for (i = 1; i < count; ++i) {
+        StudentCall item = calls[i];
+        for (j = i; j > 0; --j) {
+            const StudentCall *prev = &calls[j - 1];
+            int prev_pending = prev->status == SC_PENDING, item_pending = item.status == SC_PENDING;
+            if (prev_pending > item_pending) break;
+            if (prev_pending == item_pending && prev->created_at >= item.created_at) break;
+            calls[j] = calls[j - 1];
+        }
+        calls[j] = item;
+    }
+}
+
+/* 加入或更新一条回执；满 10 条时挤掉排在最后的（最旧的已结束回执）。返回 1 = 该回执刚从等待变为已回应。 */
+static int merge_call(StudentCall *calls, int *count, const StudentCall *incoming, ULONGLONG now)
+{
+    StudentCall work[CC_MAX_RECEIPTS + 1];
+    int i, n = *count, found = -1, replied = 0;
+
+    memcpy(work, calls, sizeof(StudentCall) * (SIZE_T)n);
+    for (i = 0; i < n; ++i) if (wcscmp(work[i].id, incoming->id) == 0) found = i;
+    if (found < 0) { found = n++; work[found] = *incoming; work[found].settled_local = 0; }
+    else {
+        ULONGLONG settled = work[found].settled_local;
+        replied = work[found].status == SC_PENDING && incoming->status == SC_REPLIED;
+        work[found] = *incoming;
+        work[found].settled_local = settled;
+    }
+    if (work[found].status == SC_PENDING) work[found].settled_local = 0;
+    else if (work[found].settled_local == 0) work[found].settled_local = now ? now : 1;
+    sort_calls(work, n);
+    if (n > CC_MAX_RECEIPTS) n = CC_MAX_RECEIPTS;
+    memcpy(calls, work, sizeof(StudentCall) * (SIZE_T)n);
+    *count = n;
+    return replied;
 }
 
 #ifndef CC_NATIVE_CONTRACT_TEST
@@ -1382,11 +1763,11 @@ static void apply_window_mode(void)
     LONG style;
 
     if (g_config.fullscreen) {
-        style = WS_POPUP | WS_MINIMIZEBOX | WS_SYSMENU;
+        style = WS_POPUP | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
         SetWindowLongPtrW(g_hwnd, GWL_STYLE, style | (IsWindowVisible(g_hwnd) ? WS_VISIBLE : 0));
         if (IsZoomed(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
     } else {
-        style = WS_OVERLAPPEDWINDOW;
+        style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
         SetWindowLongPtrW(g_hwnd, GWL_STYLE, style | (IsWindowVisible(g_hwnd) ? WS_VISIBLE : 0));
         SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
@@ -1478,6 +1859,7 @@ static void apply_event(const DisplayEvent *event)
     }
     g_current = *event;
     KillTimer(g_hwnd, TIMER_EXPIRE);
+    sc_sync();                                      /* 通知到来时呼叫面板让位，清屏后恢复 */
 
     if (!event->is_call && !event->is_announcement) {
         g_expiry_local = 0;
@@ -1640,8 +2022,15 @@ static void paint_rail(HDC dc, int w, int h, int *rail_bottom)
     draw_text_at(dc, meta_font, C_ON_BODY, x, y_center - meta_px * 6 / 10, clock_text, TA_RIGHT);
 
     memset(&g_teacher_rect, 0, sizeof(g_teacher_rect));
-    if (!g_bind_error && !g_preview && g_class_code[0] != L'\0') {
-        SIZE label = measure(dc, meta_font, L"呼叫老师 (F2)");
+    if (!g_bind_error && !g_preview && g_class_code[0] != L'\0' && !g_current.is_call && !g_current.is_announcement) {
+        WCHAR call_label[48];
+        int replied = 0, i;
+        SIZE label;
+        for (i = 0; i < g_sc_call_count; ++i) replied += g_sc_calls[i].status == SC_REPLIED;
+        if (g_sc_open) StringCchCopyW(call_label, 48, L"关闭 (F2)");
+        else if (replied > 0) StringCchPrintfW(call_label, 48, L"呼叫老师 · %d 条回应", replied);
+        else StringCchCopyW(call_label, 48, L"呼叫老师 (F2)");
+        label = measure(dc, meta_font, call_label);
         SIZE time_size = measure(dc, meta_font, clock_text);
         int button_h = label.cy + 20;
         if (button_h < 44) button_h = 44;
@@ -1650,7 +2039,7 @@ static void paint_rail(HDC dc, int w, int h, int *rail_bottom)
         g_teacher_rect.top = y_center - button_h / 2;
         g_teacher_rect.bottom = g_teacher_rect.top + button_h;
         fill_rect(dc, g_teacher_rect.left, g_teacher_rect.top, g_teacher_rect.right, g_teacher_rect.bottom, C_INK_700);
-        draw_text_at(dc, meta_font, C_GOLD, g_teacher_rect.left + 12, y_center - label.cy / 2, L"呼叫老师 (F2)", TA_LEFT);
+        draw_text_at(dc, meta_font, C_GOLD, g_teacher_rect.left + 12, y_center - label.cy / 2, call_label, TA_LEFT);
     }
 
     *rail_bottom = pad_top + row_h + pad_bottom;
@@ -2130,6 +2519,857 @@ static void paint_queue_hint(HDC dc, int w, int h)
     DeleteObject(font);
 }
 
+/* ================= 学生呼叫老师：程序内面板（不打开浏览器） ================= */
+
+typedef struct CallJob {
+    int kind;                        /* SC_JOB_* */
+    LONG version;                    /* 发起时的回执版本；查询结果过期则丢弃 */
+    WCHAR call_id[CC_UUID_UNITS + 1];
+    char body[1024];
+    SIZE_T body_length;
+    int parsed;                      /* 1 = 响应可信，options / reply 可用 */
+    DWORD http_status;
+    CallOptions options;
+    CallReply reply;
+} CallJob;
+
+enum { SC_JOB_OPTIONS = 1, SC_JOB_CREATE, SC_JOB_STATUS, SC_JOB_CANCEL };
+enum { SC_OPTIONS_NONE = 0, SC_OPTIONS_READY, SC_OPTIONS_FAILED };
+
+typedef struct ScLayout {
+    int label_px, field_px, gap;
+    int left, right, list_left, list_right, top, bottom;
+    int teacher_label_y, grid_top, grid_h, cols, rows, cell_w, cell_h, cell_gap;
+    int name_label_y, msg_label_y, buttons_y, button_h, note_y;
+    RECT name_box, msg_box;
+} ScLayout;
+
+static int sc_visible(void)
+{
+    return g_sc_open && !g_bind_error && !g_current.is_call && !g_current.is_announcement;
+}
+
+static int rail_height(int w, int h)
+{
+    int title_px = w * 19 / 1000, row_h;
+    if (title_px < 18) title_px = 18;
+    row_h = title_px * 14 / 10;
+    if (row_h < 48) row_h = 48;
+    return h * 22 / 1000 + row_h + h * 16 / 1000;
+}
+
+static void sc_layout(int w, int h, ScLayout *l)
+{
+    int count = g_sc_options_state == SC_OPTIONS_READY ? g_sc_options.teacher_count : 0;
+    int y, box_h, label_h, fixed, avail;
+
+    memset(l, 0, sizeof(*l));
+    l->top = rail_height(w, h);
+    l->label_px = w * 13 / 1000; if (l->label_px < 14) l->label_px = 14;
+    l->field_px = w * 20 / 1000;
+    if (l->field_px > (h - l->top) / 22) l->field_px = (h - l->top) / 22;
+    if (l->field_px < 16) l->field_px = 16;
+    l->gap = l->field_px * 6 / 10;
+    l->left = w * 3 / 100; l->right = w * 58 / 100;
+    l->list_left = w * 63 / 100; l->list_right = w - w * 3 / 100;
+    y = l->top + (h - l->top) * 4 / 100;
+    l->bottom = h - (h - l->top) * 4 / 100;
+    label_h = l->label_px * 17 / 10;
+    box_h = l->field_px * 21 / 10;
+    l->button_h = l->field_px * 23 / 10;
+    fixed = 2 * (label_h + box_h + l->gap) + l->gap + l->button_h + l->label_px * 25 / 10;
+
+    l->teacher_label_y = y; y += label_h;
+    l->grid_top = y;
+    l->cell_gap = l->gap / 2;
+    if (count == 0) {
+        l->grid_h = box_h;
+    } else {
+        l->cols = count <= 1 ? 1 : count <= 4 ? 2 : count <= 12 ? 3 : 4;
+        l->rows = (count + l->cols - 1) / l->cols;
+        l->cell_h = l->button_h;
+        avail = l->bottom - y - fixed;
+        if (l->rows * l->cell_h + (l->rows - 1) * l->cell_gap > avail) {
+            l->cell_h = (avail - (l->rows - 1) * l->cell_gap) / l->rows;
+        }
+        if (l->cell_h < 24) l->cell_h = 24;
+        l->grid_h = l->rows * l->cell_h + (l->rows - 1) * l->cell_gap;
+        l->cell_w = (l->right - l->left - (l->cols - 1) * l->cell_gap) / l->cols;
+    }
+    y += l->grid_h + l->gap;
+    l->name_label_y = y; y += label_h;
+    l->name_box.left = l->left; l->name_box.right = l->left + (l->right - l->left) * 45 / 100;
+    l->name_box.top = y; l->name_box.bottom = y + box_h;
+    y += box_h + l->gap;
+    l->msg_label_y = y; y += label_h;
+    l->msg_box.left = l->left; l->msg_box.right = l->right;
+    l->msg_box.top = y; l->msg_box.bottom = y + box_h;
+    y += box_h + l->gap * 2;
+    l->buttons_y = y;
+    l->note_y = y + l->button_h + l->label_px * 6 / 10;
+}
+
+/* 面板显隐、窗口尺寸或老师数量变化后，重新摆放两个输入框 */
+static void sc_sync(void)
+{
+    RECT client;
+    ScLayout l;
+    HWND edits[2];
+    const RECT *boxes[2];
+    int i, edit_h;
+
+    if (g_sc_name_edit == NULL || g_sc_msg_edit == NULL) return;
+    edits[0] = g_sc_name_edit; edits[1] = g_sc_msg_edit;
+    GetClientRect(g_hwnd, &client);
+    if (!sc_visible() || client.right <= 0 || client.bottom <= 0) {
+        HWND focus = GetFocus();
+        if (focus == g_sc_name_edit || focus == g_sc_msg_edit) SetFocus(g_hwnd);
+        for (i = 0; i < 2; ++i) ShowWindow(edits[i], SW_HIDE);
+        InvalidateRect(g_hwnd, NULL, FALSE);
+        return;
+    }
+    sc_layout(client.right, client.bottom, &l);
+    if (g_sc_edit_font == NULL || g_sc_edit_font_px != l.field_px) {
+        HFONT font = make_font(l.field_px, FW_SEMIBOLD);
+        for (i = 0; i < 2; ++i) SendMessageW(edits[i], WM_SETFONT, (WPARAM)font, TRUE);
+        if (g_sc_edit_font != NULL) DeleteObject(g_sc_edit_font);
+        g_sc_edit_font = font;
+        g_sc_edit_font_px = l.field_px;
+    }
+    boxes[0] = &l.name_box; boxes[1] = &l.msg_box;
+    edit_h = l.field_px * 14 / 10;
+    if (g_sc_submit_busy) {
+        /* 禁用带焦点的输入框会吞掉键盘：发送期间把焦点交回主窗口，Esc/F2 仍然可用 */
+        HWND focus = GetFocus();
+        if (focus == g_sc_name_edit || focus == g_sc_msg_edit) SetFocus(g_hwnd);
+    }
+    for (i = 0; i < 2; ++i) {
+        int inset = l.field_px * 5 / 10;
+        MoveWindow(edits[i], boxes[i]->left + inset, boxes[i]->top + (boxes[i]->bottom - boxes[i]->top - edit_h) / 2,
+            boxes[i]->right - boxes[i]->left - inset * 2, edit_h, TRUE);
+        EnableWindow(edits[i], !g_sc_submit_busy);
+        ShowWindow(edits[i], SW_SHOWNA);
+    }
+    InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static void sc_note(const WCHAR *text, int is_error)
+{
+    StringCchCopyW(g_sc_note, sizeof(g_sc_note) / sizeof(g_sc_note[0]), text);
+    g_sc_note_error = is_error;
+    InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+/* 有操作就重新计时：无人操作 2 分钟后自动收起面板并清空草稿 */
+static void sc_touch(void)
+{
+    if (g_sc_open) SetTimer(g_hwnd, TIMER_SC_IDLE, 120000, NULL);
+}
+
+/* ---------- 网络：每个请求一个短命线程，结果回到 UI 线程 ---------- */
+
+/* 任意状态码都读取正文（错误响应里有中文 message）；正文超过缓冲区视为失败 */
+static int http_exchange(const WCHAR *method, const WCHAR *url, const char *body, SIZE_T body_length,
+    char *buffer, SIZE_T capacity, SIZE_T *received_total, DWORD *http_status)
+{
+    UrlParts parts;
+    HINTERNET session = NULL, connection = NULL, request = NULL;
+    DWORD status = 0, status_size = sizeof(status), received;
+    int ok = 0;
+
+    *received_total = 0;
+    *http_status = 0;
+    if (!parse_url(url, &parts)) return 0;
+    session = open_session(parts.secure);
+    if (session == NULL) goto network_error;
+    WinHttpSetTimeouts(session, 10000, 10000, 10000, 15000);
+    connection = WinHttpConnect(session, parts.host, parts.port, 0);
+    if (connection == NULL) goto network_error;
+    request = WinHttpOpenRequest(connection, method, parts.object, NULL, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, parts.secure ? WINHTTP_FLAG_SECURE : 0);
+    if (request == NULL) goto network_error;
+    if (!WinHttpSendRequest(request,
+            body != NULL ? L"Content-Type: application/json; charset=utf-8\r\n" : WINHTTP_NO_ADDITIONAL_HEADERS,
+            body != NULL ? (DWORD)-1 : 0,
+            body != NULL ? (LPVOID)body : WINHTTP_NO_REQUEST_DATA, (DWORD)body_length, (DWORD)body_length, 0)
+        || !WinHttpReceiveResponse(request, NULL)) goto network_error;
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size, WINHTTP_NO_HEADER_INDEX)) goto network_error;
+    *http_status = status;
+    for (;;) {
+        DWORD available = 0;
+        received = 0;
+        if (!WinHttpQueryDataAvailable(request, &available)) goto network_error;
+        if (available == 0) break;
+        if (available > capacity - 1 - *received_total) goto done;      /* 超出预期大小：不解析截断的 JSON */
+        if (!WinHttpReadData(request, buffer + *received_total, available, &received)) goto network_error;
+        if (received == 0) break;
+        *received_total += received;
+    }
+    buffer[*received_total] = '\0';
+    ok = 1;
+    goto done;
+
+network_error:
+    log_windows_error(L"student call request", GetLastError());
+done:
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    if (session) WinHttpCloseHandle(session);
+    return ok;
+}
+
+static DWORD WINAPI call_thread(LPVOID parameter)
+{
+    CallJob *job = (CallJob *)parameter;
+    WCHAR url[CC_MAX_URL];
+    const SIZE_T capacity = 32768;
+    char *buffer = (char *)malloc(capacity);
+    SIZE_T received = 0;
+    HRESULT built;
+
+    if (job->kind == SC_JOB_OPTIONS) {
+        built = StringCchPrintfW(url, CC_MAX_URL, L"%ls/api/classes/%ls/public/student-call-options", g_config.server, g_config.class_id);
+    } else if (job->kind == SC_JOB_CREATE) {
+        built = StringCchPrintfW(url, CC_MAX_URL, L"%ls/api/classes/%ls/public/student-calls", g_config.server, g_config.class_id);
+    } else if (job->kind == SC_JOB_STATUS) {
+        built = StringCchPrintfW(url, CC_MAX_URL, L"%ls/api/classes/%ls/public/student-calls/status", g_config.server, g_config.class_id);
+    } else {
+        built = StringCchPrintfW(url, CC_MAX_URL, L"%ls/api/classes/%ls/public/student-calls/%ls/cancel",
+            g_config.server, g_config.class_id, job->call_id);
+    }
+    if (buffer != NULL && SUCCEEDED(built)
+        && http_exchange(job->kind == SC_JOB_OPTIONS ? L"GET" : L"POST", url,
+            job->kind == SC_JOB_OPTIONS ? NULL : job->body, job->body_length,
+            buffer, capacity, &received, &job->http_status)) {
+        if (job->kind == SC_JOB_OPTIONS) {
+            /* 老师列表必须属于本机绑定的班级 */
+            job->parsed = job->http_status == 200 && parse_call_options(buffer, received, &job->options)
+                && wcscmp(job->options.class_id, g_config.class_id) == 0;
+        } else {
+            job->parsed = parse_call_reply(buffer, received, &job->reply);
+        }
+        /* 日志只记请求类型与状态码，不记姓名、留言和回复 */
+        if (!job->parsed || job->http_status != 200) {
+            log_line(L"student call request kind=%d HTTP %lu parsed=%d", job->kind, (unsigned long)job->http_status, job->parsed);
+        }
+    }
+    free(buffer);
+    if (!PostMessageW(g_hwnd, WM_APP_CALL, 0, (LPARAM)job)) free(job);
+    return 0;
+}
+
+static int sc_start(CallJob *job)
+{
+    HANDLE thread = CreateThread(NULL, 0, call_thread, job, 0, NULL);
+    if (thread == NULL) { free(job); return 0; }
+    CloseHandle(thread);
+    return 1;
+}
+
+static void sc_load_options(void)
+{
+    CallJob *job;
+    if (g_sc_options_busy || g_preview) return;
+    job = (CallJob *)calloc(1, sizeof(*job));
+    if (job == NULL) return;
+    job->kind = SC_JOB_OPTIONS;
+    g_sc_options_busy = sc_start(job);
+    InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static void sc_poll(void)
+{
+    CallJob *job;
+    SIZE_T used = 0;
+    int i, ok;
+
+    if (g_sc_poll_busy || g_sc_call_count == 0 || g_preview) return;
+    job = (CallJob *)calloc(1, sizeof(*job));
+    if (job == NULL) return;
+    job->kind = SC_JOB_STATUS;
+    job->version = g_sc_version;
+    ok = json_append_raw(job->body, sizeof(job->body), &used, "{\"ids\":[");
+    for (i = 0; ok && i < g_sc_call_count; ++i) {
+        if (i > 0) ok = json_append_raw(job->body, sizeof(job->body), &used, ",");
+        ok = ok && json_append_text(job->body, sizeof(job->body), &used, g_sc_calls[i].id);
+    }
+    ok = ok && json_append_raw(job->body, sizeof(job->body), &used, "]}");
+    if (!ok) { free(job); return; }
+    job->body_length = used;
+    g_sc_poll_busy = sc_start(job);
+}
+
+static void sc_cancel(int index)
+{
+    CallJob *job;
+    if (g_sc_cancel_busy || index < 0 || index >= g_sc_call_count || g_sc_calls[index].status != SC_PENDING) return;
+    job = (CallJob *)calloc(1, sizeof(*job));
+    if (job == NULL) return;
+    job->kind = SC_JOB_CANCEL;
+    StringCchCopyW(job->call_id, CC_UUID_UNITS + 1, g_sc_calls[index].id);
+    job->body[0] = '{'; job->body[1] = '}'; job->body_length = 2;
+    ++g_sc_version;
+    g_sc_cancel_busy = sc_start(job);
+    sc_note(L"", 0);
+}
+
+/* 重试键：系统随机数生成的 UUID v4；同一份草稿重发时沿用，服务端据此去重 */
+static void sc_new_request_id(void)
+{
+    static const WCHAR HEX[] = L"0123456789abcdef";
+    BYTE bytes[16];
+    HCRYPTPROV provider = 0;
+    int i, n = 0, random_ok = 0;
+
+    if (CryptAcquireContextW(&provider, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        random_ok = CryptGenRandom(provider, sizeof(bytes), bytes) != 0;
+        CryptReleaseContext(provider, 0);
+    }
+    if (!random_ok) {
+        /* 只是去重键而非凭据：系统随机数不可用时退回到时钟与计数器 */
+        LARGE_INTEGER counter;
+        ULONGLONG seed;
+        QueryPerformanceCounter(&counter);
+        seed = unix_ms_now() ^ ((ULONGLONG)counter.QuadPart << 21) ^ ((ULONGLONG)GetCurrentProcessId() << 43) ^ GetTickCount();
+        for (i = 0; i < 16; ++i) {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+            bytes[i] = (BYTE)(seed >> 24);
+        }
+    }
+    bytes[6] = (BYTE)((bytes[6] & 0x0f) | 0x40);
+    bytes[8] = (BYTE)((bytes[8] & 0x3f) | 0x80);
+    for (i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) g_sc_request_id[n++] = L'-';
+        g_sc_request_id[n++] = HEX[bytes[i] >> 4];
+        g_sc_request_id[n++] = HEX[bytes[i] & 15];
+    }
+    g_sc_request_id[n] = L'\0';
+}
+
+/* 读取输入框并去掉首尾空白 */
+static void sc_read_field(HWND edit, WCHAR *out, int capacity)
+{
+    int length = GetWindowTextW(edit, out, capacity), start = 0;
+    while (length > 0 && (out[length - 1] == L' ' || out[length - 1] == L'\t' || out[length - 1] == 0x3000)) --length;
+    out[length] = L'\0';
+    while (out[start] == L' ' || out[start] == L'\t' || out[start] == 0x3000) ++start;
+    if (start > 0) memmove(out, out + start, (SIZE_T)(length - start + 1) * sizeof(WCHAR));
+}
+
+static void sc_clear_draft(void)
+{
+    SetWindowTextW(g_sc_name_edit, L"");
+    SetWindowTextW(g_sc_msg_edit, L"");
+    g_sc_teacher_id[0] = L'\0';
+    g_sc_request_id[0] = L'\0';
+    g_sc_request_key[0] = L'\0';
+    if (g_sc_options_state == SC_OPTIONS_READY && g_sc_options.teacher_count == 1) {
+        StringCchCopyW(g_sc_teacher_id, CC_UUID_UNITS + 1, g_sc_options.teachers[0].id);
+    }
+}
+
+static void sc_submit(void)
+{
+    WCHAR name[CC_MAX_NAME_UNITS + 2], message[CC_MAX_MESSAGE_UNITS + 2];
+    WCHAR key[CC_MAX_NAME_UNITS + CC_UUID_UNITS + CC_MAX_MESSAGE_UNITS + 8];
+    CallJob *job;
+    int i, pending = 0;
+
+    if (!sc_visible() || g_sc_submit_busy) return;
+    sc_touch();
+    sc_read_field(g_sc_name_edit, name, CC_MAX_NAME_UNITS + 1);
+    sc_read_field(g_sc_msg_edit, message, CC_MAX_MESSAGE_UNITS + 1);
+    if (g_sc_options_state != SC_OPTIONS_READY) { sc_note(L"老师列表还没有读取到", 1); sc_load_options(); return; }
+    if (g_sc_options.teacher_count == 0) return;
+    if (!g_sc_options.window_open) { sc_note(L"正在上课，请在课间呼叫", 1); sc_load_options(); return; }
+    if (g_sc_teacher_id[0] == L'\0') { sc_note(L"请选择老师", 1); return; }
+    if (name[0] == L'\0') { sc_note(L"请填写姓名", 1); SetFocus(g_sc_name_edit); return; }
+    for (i = 0; i < g_sc_call_count; ++i) pending += g_sc_calls[i].status == SC_PENDING;
+    if (pending >= CC_MAX_RECEIPTS) { sc_note(L"已有 10 条呼叫等待回应，请先等待或撤回", 1); return; }
+
+    StringCchPrintfW(key, sizeof(key) / sizeof(key[0]), L"%ls\x1f%ls\x1f%ls", name, g_sc_teacher_id, message);
+    if (g_sc_request_id[0] == L'\0' || wcscmp(key, g_sc_request_key) != 0) {
+        sc_new_request_id();
+        StringCchCopyW(g_sc_request_key, sizeof(g_sc_request_key) / sizeof(g_sc_request_key[0]), key);
+    }
+    job = (CallJob *)calloc(1, sizeof(*job));
+    if (job == NULL) return;
+    job->kind = SC_JOB_CREATE;
+    if (!build_call_body(job->body, sizeof(job->body), &job->body_length, name, g_sc_teacher_id, message, g_sc_request_id)) {
+        free(job);
+        sc_note(L"姓名或留言里有无法发送的字符", 1);
+        return;
+    }
+    ++g_sc_version;
+    g_sc_submit_busy = sc_start(job);
+    if (!g_sc_submit_busy) { sc_note(L"发送失败，请再试一次", 1); return; }
+    sc_note(L"", 0);
+    sc_sync();
+}
+
+static void sc_close(void)
+{
+    if (!g_sc_open) return;
+    g_sc_open = 0;
+    KillTimer(g_hwnd, TIMER_SC_IDLE);
+    g_sc_note[0] = L'\0';
+    /* 教室里的屏幕是共用的：收起面板就清掉上一位同学的草稿 */
+    if (!g_sc_submit_busy) sc_clear_draft();
+    sc_sync();
+}
+
+static void sc_open(void)
+{
+    if (g_bind_error || g_preview || g_class_code[0] == L'\0' || g_current.is_call || g_current.is_announcement) return;
+    g_sc_open = 1;
+    g_sc_flash_until = 0;
+    sc_touch();
+    sc_load_options();
+    sc_poll();
+    sc_sync();
+    SetFocus(g_sc_name_edit);
+}
+
+static void sc_toggle(void)
+{
+    if (g_sc_open) sc_close(); else sc_open();
+}
+
+static void sc_select_teacher(int index)
+{
+    if (g_sc_options_state != SC_OPTIONS_READY || index < 0 || index >= g_sc_options.teacher_count || g_sc_submit_busy) return;
+    StringCchCopyW(g_sc_teacher_id, CC_UUID_UNITS + 1, g_sc_options.teachers[index].id);
+    if (g_sc_note_error) g_sc_note[0] = L'\0';
+    sc_touch();
+    InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static int sc_selected_teacher(void)
+{
+    int i;
+    if (g_sc_options_state != SC_OPTIONS_READY) return -1;
+    for (i = 0; i < g_sc_options.teacher_count; ++i) {
+        if (wcscmp(g_sc_options.teachers[i].id, g_sc_teacher_id) == 0) return i;
+    }
+    return -1;
+}
+
+/* 已结束的回执在本机保留 30 分钟后移除，屏幕上不长期留着同学的姓名 */
+static void sc_expire_receipts(void)
+{
+    ULONGLONG now = unix_ms_now();
+    int i, kept = 0;
+    for (i = 0; i < g_sc_call_count; ++i) {
+        const StudentCall *call = &g_sc_calls[i];
+        if (call->settled_local != 0 && now > call->settled_local + 30ULL * 60000ULL) continue;
+        if (kept != i) g_sc_calls[kept] = *call;
+        ++kept;
+    }
+    if (kept != g_sc_call_count) { g_sc_call_count = kept; ++g_sc_version; InvalidateRect(g_hwnd, NULL, FALSE); }
+}
+
+static void sc_announce_reply(const StudentCall *call)
+{
+    StringCchPrintfW(g_sc_flash_text, sizeof(g_sc_flash_text) / sizeof(g_sc_flash_text[0]),
+        L"%ls回复%ls：%ls", call->teacher, call->student, call->reply);
+    g_sc_flash_until = unix_ms_now() + 120000ULL;
+    chime();
+    if (IsIconic(g_hwnd)) {
+        FLASHWINFO flash;
+        memset(&flash, 0, sizeof(flash));
+        flash.cbSize = sizeof(flash);
+        flash.hwnd = g_hwnd;
+        flash.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+        FlashWindowEx(&flash);
+    }
+}
+
+static void sc_finish(CallJob *job)
+{
+    ULONGLONG now = unix_ms_now();
+    int i, j;
+
+    if (job->kind == SC_JOB_OPTIONS) {
+        g_sc_options_busy = 0;
+        if (job->parsed) {
+            g_sc_options = job->options;
+            g_sc_options_state = SC_OPTIONS_READY;
+            if (sc_selected_teacher() < 0) g_sc_teacher_id[0] = L'\0';
+            if (g_sc_options.teacher_count == 1) StringCchCopyW(g_sc_teacher_id, CC_UUID_UNITS + 1, g_sc_options.teachers[0].id);
+        } else if (g_sc_options_state != SC_OPTIONS_READY) {
+            g_sc_options_state = SC_OPTIONS_FAILED;
+        }
+        sc_sync();
+    } else if (job->kind == SC_JOB_CREATE) {
+        g_sc_submit_busy = 0;
+        if (job->parsed && job->reply.ok && job->reply.call_count == 1) {
+            ++g_sc_version;
+            merge_call(g_sc_calls, &g_sc_call_count, &job->reply.calls[0], now);
+            sc_clear_draft();
+            sc_note(L"已发送", 0);
+            log_line(L"student call sent");
+        } else if (job->parsed && !job->reply.ok) {
+            sc_note(job->reply.message[0] != L'\0' ? job->reply.message : L"服务器没有接受这次呼叫", 1);
+            if (wcscmp(job->reply.error, L"CALL_WINDOW_CLOSED") == 0 || wcscmp(job->reply.error, L"TEACHER_UNAVAILABLE") == 0) sc_load_options();
+        } else {
+            sc_note(L"连接中断，请再点一次；重复提交不会重复呼叫", 1);
+        }
+        if (!g_sc_open) sc_clear_draft();
+        sc_sync();
+        if (sc_visible()) SetFocus(g_sc_name_edit);
+    } else if (job->kind == SC_JOB_CANCEL) {
+        g_sc_cancel_busy = 0;
+        if (job->parsed && job->reply.ok && job->reply.call_count == 1) {
+            ++g_sc_version;
+            merge_call(g_sc_calls, &g_sc_call_count, &job->reply.calls[0], now);
+        } else {
+            if (sc_visible()) sc_note(job->parsed && job->reply.message[0] != L'\0' ? job->reply.message : L"撤回失败，请再试一次", 1);
+            sc_poll();
+        }
+    } else {
+        g_sc_poll_busy = 0;
+        /* 期间有新的提交、撤回或过期清理：这份查询结果可能已过时，等下一轮 */
+        if (job->parsed && job->reply.ok && job->version == g_sc_version) {
+            StudentCall next[CC_MAX_RECEIPTS];
+            int count = 0;
+            for (i = 0; i < g_sc_call_count; ++i) {
+                for (j = 0; j < job->reply.call_count; ++j) {
+                    if (wcscmp(g_sc_calls[i].id, job->reply.calls[j].id) == 0) break;
+                }
+                if (j == job->reply.call_count) continue;       /* 服务端已不再保留这条回执 */
+                next[count] = g_sc_calls[i];
+                ++count;
+            }
+            memcpy(g_sc_calls, next, sizeof(StudentCall) * (SIZE_T)count);
+            g_sc_call_count = count;
+            for (j = 0; j < job->reply.call_count; ++j) {
+                for (i = 0; i < g_sc_call_count; ++i) {
+                    if (wcscmp(g_sc_calls[i].id, job->reply.calls[j].id) == 0) break;
+                }
+                if (i == g_sc_call_count) continue;             /* 只更新本机发出的呼叫 */
+                if (merge_call(g_sc_calls, &g_sc_call_count, &job->reply.calls[j], now)) sc_announce_reply(&job->reply.calls[j]);
+            }
+        }
+    }
+    free(job);
+    InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static void sc_tick(void)
+{
+    static int ticks = 0;
+    int i, active = 0;
+
+    sc_expire_receipts();
+    for (i = 0; i < g_sc_call_count; ++i) {
+        active = active || g_sc_calls[i].status == SC_PENDING || g_sc_calls[i].status == SC_UNAVAILABLE;
+    }
+    if (active || (sc_visible() && g_sc_call_count > 0)) sc_poll();
+    /* 面板开着时每 30 秒刷新一次老师与作息，课间开始/结束后按钮状态跟着变 */
+    if (sc_visible() && ++ticks % 6 == 0) sc_load_options();
+}
+
+/* 触摸一体机没有实体键盘时，由同学自己调出系统屏幕键盘 */
+typedef BOOL (WINAPI *Wow64DisableFn)(PVOID *);
+typedef BOOL (WINAPI *Wow64RevertFn)(PVOID);
+
+static void sc_screen_keyboard(void)
+{
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    Wow64DisableFn disable = kernel ? (Wow64DisableFn)(void *)GetProcAddress(kernel, "Wow64DisableWow64FsRedirection") : NULL;
+    Wow64RevertFn revert = kernel ? (Wow64RevertFn)(void *)GetProcAddress(kernel, "Wow64RevertWow64FsRedirection") : NULL;
+    PVOID old = NULL;
+    BOOL redirected = FALSE;
+    HINSTANCE result;
+    HWND target = g_sc_last_edit != NULL ? g_sc_last_edit : g_sc_name_edit;
+
+    /* 64 位 Windows 上 32 位进程必须绕开 System32 重定向，否则 osk.exe 启动失败 */
+    if (disable != NULL && revert != NULL) redirected = disable(&old);
+    result = ShellExecuteW(g_hwnd, L"open", L"osk.exe", NULL, NULL, SW_SHOWNORMAL);
+    if (redirected) revert(old);
+    if ((INT_PTR)result <= 32) sc_note(L"无法打开系统屏幕键盘", 1);
+    sc_touch();
+    SetFocus(target);
+}
+
+/* ---------- 输入框：Enter 发送、Esc/F2 收起、Tab 切换 ---------- */
+
+static LRESULT CALLBACK sc_edit_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    switch (message) {
+    case WM_KEYDOWN:
+        if (wparam == VK_RETURN) { sc_submit(); return 0; }
+        if (wparam == VK_ESCAPE || wparam == VK_F2) { sc_close(); return 0; }
+        if (wparam == VK_TAB) {
+            int back = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (hwnd == g_sc_name_edit) SetFocus(back ? g_hwnd : g_sc_msg_edit);
+            else SetFocus(back ? g_sc_name_edit : g_hwnd);
+            return 0;
+        }
+        sc_touch();
+        break;
+    case WM_CHAR:
+        if (wparam == L'\r' || wparam == L'\t' || wparam == 27) return 0;      /* 已在 WM_KEYDOWN 处理，避免提示音 */
+        break;
+    case WM_SETFOCUS:
+        g_sc_last_edit = hwnd;
+        InvalidateRect(g_hwnd, NULL, FALSE);
+        break;
+    case WM_KILLFOCUS:
+        InvalidateRect(g_hwnd, NULL, FALSE);
+        break;
+    }
+    return CallWindowProcW(g_sc_edit_base, hwnd, message, wparam, lparam);
+}
+
+static void sc_create_controls(HWND parent)
+{
+    g_sc_name_edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL, 0, 0, 10, 10,
+        parent, (HMENU)(INT_PTR)IDC_SC_NAME, g_instance, NULL);
+    g_sc_msg_edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL, 0, 0, 10, 10,
+        parent, (HMENU)(INT_PTR)IDC_SC_MESSAGE, g_instance, NULL);
+    if (g_sc_name_edit == NULL || g_sc_msg_edit == NULL) return;
+    SendMessageW(g_sc_name_edit, EM_SETLIMITTEXT, CC_MAX_NAME_UNITS, 0);
+    SendMessageW(g_sc_msg_edit, EM_SETLIMITTEXT, CC_MAX_MESSAGE_UNITS, 0);
+    g_sc_edit_base = (WNDPROC)SetWindowLongPtrW(g_sc_name_edit, GWLP_WNDPROC, (LONG_PTR)sc_edit_proc);
+    SetWindowLongPtrW(g_sc_msg_edit, GWLP_WNDPROC, (LONG_PTR)sc_edit_proc);
+    g_sc_edit_brush = CreateSolidBrush(C_INK_700);
+}
+
+/* ---------- 绘制 ---------- */
+
+static void draw_text_in(HDC dc, HFONT font, COLORREF color, const RECT *rect, const WCHAR *text, UINT format)
+{
+    RECT r = *rect;
+    HGDIOBJ old = SelectObject(dc, font);
+    SetTextColor(dc, color);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+    DrawTextW(dc, text, -1, &r, format | DT_NOPREFIX);
+    SelectObject(dc, old);
+}
+
+static void sc_button(HDC dc, HFONT font, const RECT *rect, const WCHAR *text, COLORREF fill, COLORREF ink)
+{
+    RECT inner = *rect;
+    fill_rect(dc, rect->left, rect->top, rect->right, rect->bottom, fill);
+    inner.left += 8; inner.right -= 8;
+    draw_text_in(dc, font, ink, &inner, text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void sc_frame(HDC dc, const RECT *rect, COLORREF color)
+{
+    fill_rect(dc, rect->left, rect->top, rect->right, rect->bottom, C_INK_700);
+    fill_rect(dc, rect->left, rect->bottom - 2, rect->right, rect->bottom, color);
+}
+
+static const WCHAR *sc_status_text(int status)
+{
+    switch (status) {
+    case SC_PENDING: return L"等待老师回应";
+    case SC_REPLIED: return L"老师已回应";
+    case SC_CANCELLED: return L"已撤回";
+    case SC_EXPIRED: return L"30 分钟未回应，请当面联系老师";
+    default: return L"老师或班级信息已变化，请当面联系老师";
+    }
+}
+
+static void sc_time_text(ULONGLONG unix_ms, WCHAR *out, SIZE_T capacity)
+{
+    ULARGE_INTEGER t;
+    FILETIME utc, local;
+    SYSTEMTIME st;
+
+    out[0] = L'\0';
+    t.QuadPart = unix_ms * 10000ULL + 116444736000000000ULL;
+    utc.dwLowDateTime = t.LowPart; utc.dwHighDateTime = t.HighPart;
+    if (!FileTimeToLocalFileTime(&utc, &local) || !FileTimeToSystemTime(&local, &st)) return;
+    StringCchPrintfW(out, capacity, L"%02u:%02u", st.wHour, st.wMinute);
+}
+
+static void paint_receipts(HDC dc, const ScLayout *l, HFONT label_font, HFONT strong_font)
+{
+    int y = l->teacher_label_y, i, line = l->label_px * 16 / 10, strong_line = l->field_px * 15 / 10;
+    int cancel_w = l->field_px * 4;
+
+    g_sc_cancel_count = 0;
+    for (i = 0; i < g_sc_call_count; ++i) {
+        const StudentCall *call = &g_sc_calls[i];
+        WCHAR text[CC_MAX_NAME_UNITS + CC_TEACHER_UNITS + 96], when[16];
+        RECT r;
+        int needed = strong_line + line + (call->message[0] ? line : 0) + (call->reply[0] ? strong_line * 2 : 0) + l->gap;
+        if (y + needed > l->bottom) break;
+
+        r.left = l->list_left; r.right = l->list_right - (call->status == SC_PENDING ? cancel_w + l->gap : 0);
+        r.top = y; r.bottom = y + strong_line;
+        StringCchPrintfW(text, sizeof(text) / sizeof(text[0]), L"%ls → %ls", call->student, call->teacher);
+        draw_text_in(dc, strong_font, C_ON_STRONG, &r, text, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        if (call->status == SC_PENDING) {
+            RECT *button = &g_sc_cancel_rects[g_sc_cancel_count];
+            button->right = l->list_right; button->left = l->list_right - cancel_w;
+            button->top = y; button->bottom = y + strong_line + line;
+            g_sc_cancel_index[g_sc_cancel_count++] = i;
+            sc_button(dc, label_font, button, g_sc_cancel_busy ? L"撤回中…" : L"撤回", C_INK_600, C_ON_STRONG);
+        }
+        y += strong_line;
+
+        sc_time_text(call->created_at, when, 16);
+        StringCchPrintfW(text, sizeof(text) / sizeof(text[0]), L"%ls · %ls", when, sc_status_text(call->status));
+        r.top = y; r.bottom = y + line;
+        draw_text_in(dc, label_font, call->status == SC_PENDING ? C_GOLD : C_ON_MUTED, &r, text, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        y += line;
+        if (call->message[0] != L'\0') {
+            r.right = l->list_right; r.top = y; r.bottom = y + line;
+            draw_text_in(dc, label_font, C_ON_BODY, &r, call->message, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            y += line;
+        }
+        if (call->reply[0] != L'\0') {
+            r.left = l->list_left; r.right = l->list_right; r.top = y; r.bottom = y + strong_line * 2;
+            draw_text_in(dc, strong_font, C_LIVE, &r, call->reply, DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
+            y += strong_line * 2;
+        }
+        y += l->gap / 2;
+        fill_rect(dc, l->list_left, y, l->list_right, y + 1, C_INK_600);
+        y += l->gap / 2;
+    }
+    if (g_sc_call_count > 0) fill_rect(dc, (l->right + l->list_left) / 2, l->teacher_label_y, (l->right + l->list_left) / 2 + 1, l->bottom, C_INK_600);
+}
+
+static void paint_student_call(HDC dc, int w, int h)
+{
+    ScLayout l;
+    HFONT label_font, field_font, strong_font;
+    HWND focus = GetFocus();
+    int i, selected = sc_selected_teacher(), x, button_w, can_send;
+    RECT r;
+
+    sc_layout(w, h, &l);
+    label_font = make_font(l.label_px, FW_SEMIBOLD);
+    field_font = make_font(l.field_px, FW_BOLD);
+    strong_font = make_font(l.field_px * 85 / 100, FW_BOLD);
+
+    /* 老师 */
+    draw_text_at(dc, label_font, C_ON_MUTED, l.left, l.teacher_label_y, L"老师", TA_LEFT);
+    g_sc_teacher_count = 0;
+    memset(&g_sc_retry_rect, 0, sizeof(g_sc_retry_rect));
+    if (g_sc_options_state == SC_OPTIONS_READY && g_sc_options.teacher_count > 0) {
+        int text_px = l.cell_h * 5 / 10 < l.field_px ? l.cell_h * 5 / 10 : l.field_px;
+        HFONT teacher_font = make_font(text_px < 12 ? 12 : text_px, FW_BOLD);
+        g_sc_teacher_count = g_sc_options.teacher_count;
+        for (i = 0; i < g_sc_options.teacher_count; ++i) {
+            const TeacherOption *teacher = &g_sc_options.teachers[i];
+            WCHAR label[CC_TEACHER_UNITS + CC_TEACHER_TITLE_UNITS + 8];
+            RECT *cell = &g_sc_teacher_rects[i];
+            cell->left = l.left + (i % l.cols) * (l.cell_w + l.cell_gap);
+            cell->top = l.grid_top + (i / l.cols) * (l.cell_h + l.cell_gap);
+            cell->right = cell->left + l.cell_w;
+            cell->bottom = cell->top + l.cell_h;
+            if (teacher->title[0] != L'\0') StringCchPrintfW(label, sizeof(label) / sizeof(label[0]), L"%ls · %ls", teacher->name, teacher->title);
+            else StringCchCopyW(label, sizeof(label) / sizeof(label[0]), teacher->name);
+            sc_button(dc, teacher_font, cell, label, i == selected ? C_GOLD : C_INK_700, i == selected ? C_INK_900 : C_ON_STRONG);
+        }
+        DeleteObject(teacher_font);
+    } else {
+        const WCHAR *text = g_sc_options_state == SC_OPTIONS_READY ? L"本班还没有可呼叫的老师"
+            : g_sc_options_state == SC_OPTIONS_FAILED && !g_sc_options_busy ? L"未能读取老师列表 · 点此重试" : L"正在读取…";
+        r.left = l.left; r.right = l.right; r.top = l.grid_top; r.bottom = l.grid_top + l.grid_h;
+        draw_text_in(dc, field_font, g_sc_options_state == SC_OPTIONS_NONE || g_sc_options_busy ? C_ON_MUTED : C_ALERT_TXT,
+            &r, text, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        if (g_sc_options_state == SC_OPTIONS_FAILED && !g_sc_options_busy) g_sc_retry_rect = r;
+    }
+
+    /* 姓名、留言：输入框本体是子窗口，这里只画标签与底框 */
+    draw_text_at(dc, label_font, C_ON_MUTED, l.left, l.name_label_y, L"姓名", TA_LEFT);
+    sc_frame(dc, &l.name_box, focus == g_sc_name_edit ? C_GOLD : C_INK_600);
+    draw_text_at(dc, label_font, C_ON_MUTED, l.left, l.msg_label_y, L"留言（可不填）", TA_LEFT);
+    sc_frame(dc, &l.msg_box, focus == g_sc_msg_edit ? C_GOLD : C_INK_600);
+    g_sc_name_box = l.name_box;
+    g_sc_msg_box = l.msg_box;
+
+    /* 按钮 */
+    can_send = !g_sc_submit_busy && g_sc_options_state == SC_OPTIONS_READY
+        && g_sc_options.teacher_count > 0 && g_sc_options.window_open;
+    button_w = l.field_px * 7;
+    x = l.left;
+    g_sc_send_rect.left = x; g_sc_send_rect.right = x + button_w;
+    g_sc_send_rect.top = l.buttons_y; g_sc_send_rect.bottom = l.buttons_y + l.button_h;
+    sc_button(dc, field_font, &g_sc_send_rect, g_sc_submit_busy ? L"发送中…" : L"呼叫",
+        can_send ? C_GOLD : C_GOLD_DIM, C_INK_900);
+    x += button_w + l.gap;
+    g_sc_osk_rect = g_sc_send_rect; g_sc_osk_rect.left = x; g_sc_osk_rect.right = x + button_w;
+    sc_button(dc, field_font, &g_sc_osk_rect, L"屏幕键盘", C_INK_700, C_ON_STRONG);
+    x += button_w + l.gap;
+    g_sc_close_rect = g_sc_send_rect; g_sc_close_rect.left = x; g_sc_close_rect.right = x + button_w * 7 / 10;
+    sc_button(dc, field_font, &g_sc_close_rect, L"关闭", C_INK_700, C_ON_STRONG);
+
+    /* 按钮下方：操作反馈；没有反馈时，只在不能呼叫的情况下说明原因 */
+    r.left = l.left; r.right = l.right; r.top = l.note_y; r.bottom = l.note_y + l.label_px * 2;
+    if (g_sc_note[0] != L'\0') {
+        draw_text_in(dc, label_font, g_sc_note_error ? C_ALERT_TXT : C_LIVE, &r, g_sc_note, DT_SINGLELINE | DT_END_ELLIPSIS);
+    } else if (g_sc_options_state == SC_OPTIONS_READY && g_sc_options.teacher_count > 0 && !g_sc_options.window_open) {
+        draw_text_in(dc, label_font, C_ALERT_TXT, &r, L"正在上课，请在课间呼叫", DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    paint_receipts(dc, &l, label_font, strong_font);
+    DeleteObject(label_font);
+    DeleteObject(field_font);
+    DeleteObject(strong_font);
+}
+
+/* 待机画面：老师刚回复时在底部显示两分钟，之后只在顶栏按钮上保留条数 */
+static void paint_reply_banner(HDC dc, int w, int h)
+{
+    HFONT font;
+    int px = w * 22 / 1000, pad;
+    RECT r;
+    SIZE size;
+
+    if (g_sc_flash_until == 0 || unix_ms_now() >= g_sc_flash_until) return;
+    if (px < 18) px = 18;
+    font = make_font(px, FW_BOLD);
+    size = measure(dc, font, g_sc_flash_text);
+    pad = px;
+    if (size.cx > w * 88 / 100) size.cx = w * 88 / 100;
+    r.left = w / 2 - size.cx / 2 - pad; r.right = w / 2 + size.cx / 2 + pad;
+    r.bottom = h - h * 6 / 100; r.top = r.bottom - size.cy - pad;
+    fill_rect(dc, r.left, r.top, r.right, r.bottom, C_LIVE_DIM);
+    r.left += pad; r.right -= pad;
+    draw_text_in(dc, font, C_LIVE, &r, g_sc_flash_text, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS);
+    DeleteObject(font);
+}
+
+/* 面板上的点击。返回 1 = 已处理 */
+static int sc_click(POINT pt)
+{
+    int i;
+
+    if (!sc_visible()) return 0;
+    sc_touch();
+    for (i = 0; i < g_sc_teacher_count; ++i) {
+        if (PtInRect(&g_sc_teacher_rects[i], pt)) { sc_select_teacher(i); return 1; }
+    }
+    for (i = 0; i < g_sc_cancel_count; ++i) {
+        if (PtInRect(&g_sc_cancel_rects[i], pt)) { sc_cancel(g_sc_cancel_index[i]); return 1; }
+    }
+    if (PtInRect(&g_sc_send_rect, pt)) { sc_submit(); return 1; }
+    if (PtInRect(&g_sc_osk_rect, pt)) { sc_screen_keyboard(); return 1; }
+    if (PtInRect(&g_sc_close_rect, pt)) { sc_close(); return 1; }
+    if (PtInRect(&g_sc_retry_rect, pt)) { sc_load_options(); return 1; }
+    if (PtInRect(&g_sc_name_box, pt)) { SetFocus(g_sc_name_edit); return 1; }
+    if (PtInRect(&g_sc_msg_box, pt)) { SetFocus(g_sc_msg_edit); return 1; }
+    return 1;
+}
+
+static int sc_hot(POINT pt)
+{
+    int i;
+    if (!sc_visible()) return 0;
+    for (i = 0; i < g_sc_teacher_count; ++i) if (PtInRect(&g_sc_teacher_rects[i], pt)) return 1;
+    for (i = 0; i < g_sc_cancel_count; ++i) if (PtInRect(&g_sc_cancel_rects[i], pt)) return 1;
+    return PtInRect(&g_sc_send_rect, pt) || PtInRect(&g_sc_osk_rect, pt) || PtInRect(&g_sc_close_rect, pt)
+        || PtInRect(&g_sc_retry_rect, pt);
+}
+
 static void paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
@@ -2162,10 +3402,15 @@ static void paint(HWND hwnd)
         memset(&g_ack_rect, 0, sizeof(g_ack_rect));
         g_name_rect_count = 0;
         paint_announcement(dc, w, rail_bottom, foot_top);
+    } else if (sc_visible()) {
+        memset(&g_ack_rect, 0, sizeof(g_ack_rect));
+        g_name_rect_count = 0;
+        paint_student_call(dc, w, h);
     } else {
         memset(&g_ack_rect, 0, sizeof(g_ack_rect));
         g_name_rect_count = 0;
         paint_idle(dc, w, rail_bottom, foot_top);
+        paint_reply_banner(dc, w, h);
     }
     paint_queue_hint(dc, w, h);
     paint_reconnect_notice(dc, w, h);
@@ -2179,27 +3424,36 @@ static void paint(HWND hwnd)
 
 /* ================= 窗口过程 ================= */
 
-static void open_teacher_call(void)
-{
-    WCHAR url[CC_MAX_URL + 128];
-    HINSTANCE result;
-    if (g_bind_error || g_preview || g_class_code[0] == L'\0') return;
-    if (FAILED(StringCchPrintfW(url, sizeof(url) / sizeof(url[0]), L"%ls/display?class=%ls&callTeacher=1", g_config.server, g_config.class_id))) return;
-    result = ShellExecuteW(g_hwnd, L"open", url, NULL, NULL, SW_SHOWNORMAL);
-    if ((INT_PTR)result <= 32) {
-        MessageBoxW(g_hwnd, L"无法打开浏览器。请设置支持现代网页的默认浏览器后重试。", L"呼叫老师", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    /* 专用大屏通常置顶；最小化后学生才能操作浏览器，后续通知仍照常恢复窗口。 */
-    ShowWindow(g_hwnd, SW_MINIMIZE);
-}
-
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
     case WM_CREATE:
         g_hwnd = hwnd;
         SetTimer(hwnd, TIMER_CLOCK, 1000, NULL);
+        SetTimer(hwnd, TIMER_SC_POLL, 5000, NULL);
+        sc_create_controls(hwnd);
+        return 0;
+
+    case WM_SIZE:
+        sc_sync();
+        return 0;
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORSTATIC:
+        /* 输入框与面板底框同色；禁用（发送中）时系统按 STATIC 询问颜色 */
+        SetTextColor((HDC)wparam, C_ON_STRONG);
+        SetBkColor((HDC)wparam, C_INK_700);
+        return (LRESULT)g_sc_edit_brush;
+
+    case WM_COMMAND:
+        if (HIWORD(wparam) == EN_CHANGE && g_sc_open) {
+            sc_touch();
+            if (g_sc_note[0] != L'\0') sc_note(L"", 0);
+        }
+        return 0;
+
+    case WM_APP_CALL:
+        if (lparam != 0) sc_finish((CallJob *)lparam);
         return 0;
 
     case WM_ERASEBKGND:
@@ -2216,6 +3470,11 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             KillTimer(hwnd, TIMER_CURSOR);
             g_cursor_visible = 0;
             SetCursor(NULL);
+        } else if (wparam == TIMER_SC_POLL) {
+            sc_tick();
+        } else if (wparam == TIMER_SC_IDLE) {
+            if (g_sc_submit_busy) sc_touch();
+            else sc_close();
         } else if (wparam == TIMER_EXPIRE) {
             KillTimer(hwnd, TIMER_EXPIRE);
             if ((g_current.is_call || g_current.is_announcement) && g_expiry_local != 0 && unix_ms_now() >= g_expiry_local) {
@@ -2257,6 +3516,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
                 g_bind_error = 1;
                 StringCchCopyW(g_class_name, CC_CLASS_NAME_UNITS + 1, L"班级绑定错误");
                 g_class_code[0] = L'\0';
+                sc_close();
                 /* 绑定错误期间不展示任何通知：清掉可能已经画上去的内容 */
                 memset(&clear, 0, sizeof(clear));
                 clear.id = g_last_id;
@@ -2289,7 +3549,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         int i;
         pt.x = (short)LOWORD(lparam);
         pt.y = (short)HIWORD(lparam);
-        if (PtInRect(&g_teacher_rect, pt)) { open_teacher_call(); return 0; }
+        if (PtInRect(&g_teacher_rect, pt)) { sc_toggle(); return 0; }
+        if (sc_click(pt)) return 0;
         if (!g_current.is_call) return 0;
         if (PtInRect(&g_ack_rect, pt)) { send_ack(-1); return 0; }
         for (i = 0; i < g_name_rect_count; ++i) {
@@ -2310,6 +3571,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
     }
 
     case WM_SETCURSOR:
+        if ((HWND)wparam != hwnd) break;             /* 输入框自己显示文本光标 */
         if (LOWORD(lparam) == HTCLIENT && g_config.hide_cursor && !g_cursor_visible) {
             SetCursor(NULL);
             return TRUE;
@@ -2321,7 +3583,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         int over, i;
         pt.x = (short)LOWORD(lparam);
         pt.y = (short)HIWORD(lparam);
-        over = PtInRect(&g_teacher_rect, pt);
+        over = PtInRect(&g_teacher_rect, pt) || sc_hot(pt);
         if (g_current.is_call) {
             over = over || PtInRect(&g_ack_rect, pt);
             for (i = 0; !over && i < g_name_rect_count; ++i) over = PtInRect(&g_name_rects[i], pt);
@@ -2336,7 +3598,18 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
 
     case WM_KEYDOWN:
         if (wparam == VK_F2) {
-            open_teacher_call();
+            sc_toggle();
+        } else if (sc_visible() && (wparam == VK_ESCAPE || wparam == VK_RETURN || wparam == VK_TAB
+                || wparam == VK_LEFT || wparam == VK_RIGHT || wparam == VK_UP || wparam == VK_DOWN)) {
+            /* 焦点在面板而不在输入框时：方向键选老师，Tab 进入姓名，Enter 发送，Esc 收起 */
+            if (wparam == VK_ESCAPE) sc_close();
+            else if (wparam == VK_RETURN) sc_submit();
+            else if (wparam == VK_TAB) SetFocus((GetKeyState(VK_SHIFT) & 0x8000) ? g_sc_msg_edit : g_sc_name_edit);
+            else if (g_sc_options_state == SC_OPTIONS_READY && g_sc_options.teacher_count > 0) {
+                int count = g_sc_options.teacher_count, current = sc_selected_teacher();
+                int step = (wparam == VK_LEFT || wparam == VK_UP) ? -1 : 1;
+                sc_select_teacher(current < 0 ? (step > 0 ? 0 : count - 1) : (current + step + count) % count);
+            }
         } else if (wparam == VK_ESCAPE) {
             ShowWindow(hwnd, SW_MINIMIZE);           /* 不退出：下一次通知会自动恢复 */
         } else if (wparam == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000)) {
@@ -2370,6 +3643,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         InterlockedExchange(&g_stop, 1);
         KillTimer(hwnd, TIMER_CLOCK);
         KillTimer(hwnd, TIMER_PROGRESS);
+        KillTimer(hwnd, TIMER_SC_POLL);
+        KillTimer(hwnd, TIMER_SC_IDLE);
         PostQuitMessage(0);
         return 0;
     }
@@ -2561,7 +3836,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
 
     g_hwnd = CreateWindowExW(WS_EX_APPWINDOW, CC_WINDOW_CLASS,
         CC_APP_TITLE,
-        g_config.fullscreen ? (WS_POPUP | WS_MINIMIZEBOX | WS_SYSMENU) : WS_OVERLAPPEDWINDOW,
+        g_config.fullscreen ? (WS_POPUP | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN) : (WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN),
         CW_USEDEFAULT, CW_USEDEFAULT, 1024, 640, NULL, NULL, instance, NULL);
     if (g_hwnd == NULL) return 1;
     if (g_config.always_topmost) set_topmost(1);

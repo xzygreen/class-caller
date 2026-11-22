@@ -29,8 +29,8 @@ test('大屏 exe 固定为 Windows 7 x86 GUI 程序，只用本班公开接口',
   assert.ok(source.includes('SW_RESTORE'));
   assert.ok(!source.includes('/api/teacher/') && !source.includes('/teacher/'), '大屏程序不得访问老师接口');
   assert.ok(!/\bsystem\s*\(/.test(source));
-  assert.equal((source.match(/ShellExecuteW\(/g) || []).length, 1, '唯一外部打开操作是学生主动打开本班浏览器呼叫页');
-  assert.match(source, /L"%ls\/display\?class=%ls&callTeacher=1"/);
+  assert.equal((source.match(/ShellExecuteW\(/g) || []).length, 1, '唯一外部打开操作是学生主动调出系统屏幕键盘');
+  assert.match(source, /ShellExecuteW\(g_hwnd, L"open", L"osk\.exe"/);
   assert.match(source, /wparam == VK_F2/);
   assert.ok(!source.includes('CreateProcess'));
   assert.ok(!source.includes('等待老师点名'));
@@ -185,11 +185,118 @@ test('compiled display parser consumes actual call, ACK, clear and announcement 
   });
 });
 
+test('学生呼叫老师在程序内完成：不打开浏览器，只用本班公开接口', () => {
+  assert.ok(!source.includes('callTeacher') && !source.includes('/display?'), '不得再跳转到网页大屏');
+  assert.ok(!/L"https?:/.test(source), '不得内置任何网址');
+  for (const api of ['public/student-call-options', 'public/student-calls"', 'public/student-calls/status', 'public/student-calls/%ls/cancel']) {
+    assert.ok(source.includes('/api/classes/%ls/' + api), api);
+  }
+  assert.ok(source.includes('wcscmp(job->options.class_id, g_config.class_id) == 0'), '老师列表必须属于绑定班级');
+  assert.ok(source.includes('L"EDIT"') && source.includes('WS_CLIPCHILDREN'), '姓名与留言用系统输入框，支持输入法');
+  assert.ok(source.includes('static void sc_sync(void)') && /g_current = \*event;\n    KillTimer\(g_hwnd, TIMER_EXPIRE\);\n    sc_sync\(\);/.test(source), '通知到来时面板让位');
+  assert.ok(source.includes('CryptGenRandom'), '重试键使用系统随机数');
+  assert.ok(!/log_line\([^;]*(student|message|reply)\b[^;]*%ls/.test(source.slice(source.indexOf('学生呼叫老师：程序内面板'))), '日志不记录姓名、留言与回复');
+  assert.ok(guide.includes('屏幕键盘') && !guide.includes('callTeacher=1'), '文档描述程序内呼叫');
+});
+
+test('compiled display parser consumes real student-call responses and builds matching requests', async (t) => {
+  const parse = compileParser(t, 'display');
+  if (!parse) return;
+  const { randomUUID } = require('node:crypto');
+  const { start, req, teacherWithAccess, TEACHER2 } = require('./helpers');
+  const units = (text) => text ? [...Array(text.length).keys()].map((i) => text.charCodeAt(i).toString(16).padStart(4, '0')).join('') : '-';
+  const STATUS = { pending: 0, replied: 1, cancelled: 2, expired: 3, unavailable: 4 };
+  const line = (c, settled = 0) => [c.id, STATUS[c.status], c.createdAt, settled, units(c.studentName), units(c.teacherName), units(c.message), units(c.reply)].join(' ');
+  const s = await start(); t.after(() => s.stop());
+  const { client, user } = await teacherWithAccess(s.base, ['class-a']);
+  const other = await teacherWithAccess(s.base, ['class-a'], TEACHER2);
+  const api = (sub, body) => req(s.base, body ? 'POST' : 'GET', '/api/classes/class-a/public/' + sub, body ? { body } : {});
+
+  const options = await api('student-call-options');
+  await t.test('real teacher options', () => {
+    const [head, ...rows] = parse('call-options', options.body).split('\n');
+    assert.equal(head, `class-a ${options.json.callWindow.open ? 1 : 0} 2`);
+    assert.deepEqual(rows.sort(), options.json.teachers.map((x) => `${x.id} ${units(x.displayName)} ${units(x.title)}`).sort());
+    assert.ok(rows.some((row) => row.startsWith(user.id)) && rows.some((row) => row.startsWith(other.user.id)));
+  });
+  await t.test('options reject failures, foreign shapes and oversize fields; extra teachers are ignored', () => {
+    const base = options.json;
+    for (const bad of [{ ...base, ok: false }, { ...base, classId: 'A' }, { ...base, callWindow: {} }, { ...base, teachers: undefined },
+      { ...base, teachers: [{ id: 'x', displayName: '张' }] }, { ...base, teachers: [{ ...base.teachers[0], displayName: '' }] },
+      { ...base, teachers: [{ ...base.teachers[0], displayName: '张'.repeat(41) }] }, { ...base, callWindow: { open: 1 } }]) {
+      parse('call-options', JSON.stringify(bad), 2);
+    }
+    parse('call-options', JSON.stringify(base) + 'x', 2);
+    parse('call-options', '{"ok":false,"error":"CLASS_NOT_FOUND","message":"x"}', 2);
+    const many = { ...base, teachers: Array.from({ length: 30 }, () => ({ id: randomUUID(), displayName: '老师', title: '' })) };
+    assert.equal(parse('call-options', JSON.stringify(many)).split('\n')[0], `class-a ${base.callWindow.open ? 1 : 0} 24`);
+  });
+
+  const body = { requestId: randomUUID(), studentName: '学生130', teacherId: user.id, message: '请来教室 "A\\B" 😀' };
+  const created = await api('student-calls', body);
+  assert.equal(created.status, 200, created.body);
+  const call = created.json.call;
+  await t.test('real create receipt', () => assert.equal(parse('call-reply', created.body), 'ok 1\n' + line(call)));
+  await t.test('request body re-encoded by the native builder is accepted JSON with identical text', () => {
+    const rebuilt = JSON.parse(parse('call-body', created.body));
+    assert.deepEqual(rebuilt, { studentName: call.studentName, teacherId: call.id, message: call.message, requestId: call.id });
+    parse('call-body', JSON.stringify({ ok: true, call: { ...call, message: '\ud83d' } }), 2);
+  });
+  await t.test('a body built natively is idempotent on the real server', async () => {
+    const native = parse('call-body', JSON.stringify({ ok: true, call: { ...call, id: body.requestId } }));
+    const retry = await api('student-calls', { ...JSON.parse(native), teacherId: user.id });
+    assert.equal(retry.status, 200, retry.body);
+    assert.equal(retry.json.call.id, call.id);
+  });
+  await t.test('real server rejections expose code and message', async () => {
+    const duplicate = await api('student-calls', { ...body, requestId: randomUUID() });
+    assert.equal(duplicate.status, 429, duplicate.body);
+    assert.equal(parse('call-reply', duplicate.body), `error ${duplicate.json.error} ${units(duplicate.json.message)}`);
+    const unknown = await api('student-calls', { ...body, requestId: randomUUID(), studentName: '不在名单' });
+    assert.equal(parse('call-reply', unknown.body), `error ${unknown.json.error} ${units(unknown.json.message)}`);
+  });
+  const replied = await client.post('/api/me/student-calls/' + call.id + '/reply', { reply: '收到，五分钟后到教室' });
+  assert.equal(replied.status, 200);
+  const status = await api('student-calls/status', { ids: [call.id] });
+  await t.test('real status with teacher reply', () => {
+    assert.equal(status.json.calls[0].status, 'replied');
+    assert.equal(parse('call-reply', status.body), 'ok 1\n' + line(status.json.calls[0]));
+  });
+  await t.test('real cancel rejection after reply', async () => {
+    const cancel = await api('student-calls/' + call.id + '/cancel', {});
+    assert.equal(cancel.status, 409);
+    assert.equal(parse('call-reply', cancel.body), `error STUDENT_CALL_CLOSED ${units(cancel.json.message)}`);
+  });
+  await t.test('receipt list: pending first, newest first, reply detected once, capped at 10', () => {
+    const mk = (i, st) => ({ ...call, id: randomUUID(), status: st, createdAt: 1000 + i, reply: st === 'replied' ? '好' : '' });
+    const pendingOld = mk(1, 'pending'), done = mk(5, 'cancelled'), pendingNew = mk(3, 'pending');
+    const answered = { ...pendingOld, status: 'replied', reply: '来了' };
+    const out = parse('call-merge', JSON.stringify({ ok: true, calls: [pendingOld, done, pendingNew, answered, answered] })).split('\n');
+    assert.equal(out[0], '3 1');
+    assert.deepEqual(out.slice(1), [line(pendingNew), line(done, 1), line(answered, 1)]);
+    const ten = Array.from({ length: 10 }, (_, i) => mk(i, i < 9 ? 'expired' : 'pending'));
+    const full = parse('call-merge', JSON.stringify({ ok: true, calls: ten })).split('\n');
+    assert.equal(full[0], '10 0');
+    assert.equal(full[1], line(ten[9]));
+    parse('call-reply', JSON.stringify({ ok: true, calls: [...ten, mk(11, 'pending')] }), 2);
+  });
+  await t.test('reply parser rejects malformed receipts', () => {
+    for (const bad of [{ ok: true }, { ok: true, call: { ...call, id: 'not-a-uuid' } }, { ok: true, call: { ...call, status: 'other' } },
+      { ok: true, call: { ...call, studentName: '' } }, { ok: true, call: { ...call, reply: 'a'.repeat(61) } },
+      { ok: true, call: { ...call, message: 'a\u0001' } }, { ok: false }, { call }, { ok: 'true', call }]) {
+      parse('call-reply', JSON.stringify(bad), 2);
+    }
+    parse('call-reply', JSON.stringify({ ok: true, call }) + '{}', 2);
+  });
+});
+
 test('fresh display build is PE32 i386 GUI 6.01 with MSVCRT and no UCRT', (t) => {
   const data = freshPE(t, 'display', 2);
   if (!data) return;
   assert.ok(data.includes(Buffer.from('老师找人通知大屏', 'utf16le')), '编译产物必须带新的程序名');
   assert.ok(data.includes(Buffer.from('announcement', 'utf16le')), '编译产物必须识别留言快照');
+  assert.ok(data.includes(Buffer.from('/public/student-calls', 'utf16le')), '编译产物必须内置学生呼叫');
+  assert.ok(!data.includes(Buffer.from('callTeacher', 'utf16le')), '编译产物不得再跳转浏览器');
 });
 
 test('autostart distinguishes automatic idempotent start from manual wake', () => {
